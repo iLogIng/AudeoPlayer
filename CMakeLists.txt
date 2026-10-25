@@ -36,9 +36,9 @@ target_include_directories(AudeoPlayer PRIVATE
 target_link_libraries(AudeoPlayer PRIVATE
     PkgConfig::AVFORMAT
     PkgConfig::AVCODEC
+    PkgConfig::SWRESAMPLE
     PkgConfig::AVUTIL
     PkgConfig::SWSCALE
-    PkgConfig::SWRESAMPLE
     SDL3::SDL3
     # PkgConfig::AVFILTER   # 启用滤镜
     # SDL3::SDL3_main       # 静态链接 SDL3 且需要入口替换时取消注释

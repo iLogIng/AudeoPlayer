@@ -7,11 +7,8 @@
 #include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_timer.h>
-#include <libavcodec/codec_id.h>
 
 extern "C" {
-#include <libavcodec/packet.h>
-#include <libavcodec/codec.h>
 #include <libavutil/avutil.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
