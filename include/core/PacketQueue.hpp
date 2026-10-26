@@ -33,7 +33,7 @@ public:
     void pushEof();
     // 清空队列
     void flush();
-    // 唤醒所有阻塞的线程
+    // 终止并唤醒所有阻塞的线程
     void abort();
 
     size_t packetCount() const;

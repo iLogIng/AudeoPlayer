@@ -62,6 +62,7 @@ void AudioPlayer::start()
     });
 }
 
+// 停止
 void AudioPlayer::stop()
 {
     m_demuxThread.request_stop();
@@ -77,16 +78,19 @@ void AudioPlayer::stop()
     m_started.store(false);
 }
 
+// 停止播放设备
 void AudioPlayer::pause(bool paused)
 {
     m_output.pause(paused);
 }
 
+// 播放完成
 bool AudioPlayer::finished() const
 {
     return m_decodeDone.load() && m_output.queuedBytes() == 0;
 }
 
+// 错误信息
 std::exception_ptr AudioPlayer::error() const
 {
     std::lock_guard lock(m_errorMutex);
