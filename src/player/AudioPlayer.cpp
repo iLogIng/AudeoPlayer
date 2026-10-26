@@ -200,7 +200,11 @@ void AudioPlayer::decodeLoop(std::stop_token st)
 
         // 文件结尾 刷新解码器与重采样器缓冲
         if (status == QueueStatus::Eof) {
-            if (flushAll()) m_decodeDone.store(true);
+            if (flushAll()) {
+                // 处理短于预缓冲的文件
+                m_output.resume();
+                m_decodeDone.store(true);
+            }
             return;
         }
 

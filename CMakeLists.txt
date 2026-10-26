@@ -29,6 +29,7 @@ add_library(avplayer_core STATIC
     src/media/Demuxer.cpp
     src/media/AudioDecoder.cpp
     src/media/Resampler.cpp
+    src/output/PcmRingBuffer.cpp
     src/output/AudioOutput.cpp
     src/output/Window.cpp
     src/player/AudioPlayer.cpp
