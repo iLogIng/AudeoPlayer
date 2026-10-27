@@ -29,9 +29,13 @@ public:
     bool push(const uint8_t *pcmData, size_t bytes, int64_t ptsUs, std::stop_token st);
     // 文件结束时强制恢复设备 处理短于预缓冲的文件
     void resume();
+    // 标记所有 PCM 已写入 避免把尾部的静音补齐统计为欠载
+    void markEndOfStream();
     size_t queuedBytes() const;
     void pause(bool paused);
     void setVolume(float volume);
+    // 仅唤醒可能阻塞在 ring 写入的生产者 不销毁设备
+    void abort();
     void close();
 
     const SDL_AudioSpec& spec() const { return m_spec; }
@@ -62,6 +66,7 @@ private:
     std::atomic<bool> m_closing{false};
     std::atomic<bool> m_paused{false};
     std::atomic<bool> m_deviceResumed{false};
+    std::atomic<bool> m_endOfStream{false};
     std::atomic<uint64_t> m_underruns{0};
 
 }; // class AudioOutput

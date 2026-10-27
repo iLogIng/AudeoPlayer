@@ -70,6 +70,7 @@ void AudioOutput::open()
     m_clock.reset(m_spec.freq);
     m_clock.setDeviceLatencyUs(static_cast<int64_t>(m_deviceBufferDurationMs) * 1000);
     m_basePtsSet = false;
+    m_endOfStream.store(false);
 
     // 使用回调模式打开音频设备流 设备默认处于暂停状态
     m_stream = SDL_OpenAudioDeviceStream(
@@ -104,6 +105,12 @@ bool AudioOutput::push(const uint8_t *pcmData, size_t bytes, int64_t ptsUs,
     // 达到预缓冲后自动开始播放
     maybeResume();
     return true;
+}
+
+// 标记所有 PCM 已写入
+void AudioOutput::markEndOfStream()
+{
+    m_endOfStream.store(true);
 }
 
 // 文件结束时强制恢复设备
@@ -156,9 +163,9 @@ void AudioOutput::pause(bool paused)
         return;
     }
 
-    m_clock.resume();
     if (m_deviceResumed.load()) {
         SDL_ResumeAudioStreamDevice(m_stream);
+        m_clock.resume();
     } else {
         maybeResume();
     }
@@ -173,13 +180,19 @@ void AudioOutput::setVolume(float volume)
     }
 }
 
+// 唤醒可能阻塞在 ring 写入的生产者
+void AudioOutput::abort()
+{
+    if (m_ring) m_ring->abort();
+}
+
 // 关闭音频输出设备
 void AudioOutput::close()
 {
     m_closing.store(true);
 
     // 唤醒可能阻塞在 write 的生产者
-    if (m_ring) m_ring->abort();
+    abort();
 
     // 先停止并销毁 SDL 流 确保回调不再运行
     if (m_stream) {
@@ -198,6 +211,7 @@ void AudioOutput::close()
     m_clock.reset(0);
     m_deviceResumed.store(false);
     m_paused.store(false);
+    m_endOfStream.store(false);
     m_closing.store(false);
 
     // 仅在出现欠载时输出诊断信息 读取后清零避免重复输出
@@ -245,8 +259,9 @@ void SDLCALL AudioOutput::streamCallback(void *userdata, SDL_AudioStream *stream
         const size_t want = std::min(remaining, sizeof(buffer));
         const size_t n = self->m_ring->read(buffer, want);
         if (n == 0) {
-            // 队列空 SDL 本次会用静音补齐
-            self->m_underruns.fetch_add(1, std::memory_order_relaxed);
+            // 所有 PCM 已送入后 尾部静音补齐不算欠载
+            if (!self->m_endOfStream.load(std::memory_order_relaxed))
+                self->m_underruns.fetch_add(1, std::memory_order_relaxed);
             break;
         }
 
@@ -258,20 +273,22 @@ void SDLCALL AudioOutput::streamCallback(void *userdata, SDL_AudioStream *stream
     }
 
     // 更新音频时钟
+    int64_t frames = 0;
     if (self->m_frameBytes > 0 && fedBytes > 0) {
         // 已送入 SDL 的帧数
-        self->m_clock.onFramesConsumed(
-            static_cast<int64_t>(fedBytes / self->m_frameBytes));
+        frames = static_cast<int64_t>(fedBytes / self->m_frameBytes);
     }
 
+    // 仍在 SDL 音频设备中排队的数据
+    int64_t bufferedUs = 0;
     if (self->m_bytesPerSecond > 0) {
-        // 仍在 SDL 音频设备中排队的数据
         int sdlQueued = SDL_GetAudioStreamQueued(stream);
         if (sdlQueued < 0) sdlQueued = 0;
-        self->m_clock.setBufferedUs(
-            static_cast<int64_t>(sdlQueued) * 1'000'000
-            / static_cast<int64_t>(self->m_bytesPerSecond));
+        bufferedUs = static_cast<int64_t>(sdlQueued) * 1'000'000
+                   / static_cast<int64_t>(self->m_bytesPerSecond);
     }
+
+    self->m_clock.advance(frames, bufferedUs);
 }
 
 } // namespace avplayer
