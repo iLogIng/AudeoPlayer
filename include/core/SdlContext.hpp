@@ -26,6 +26,13 @@ public:
     SdlContext(const SdlContext&)            = delete;
     SdlContext& operator=(const SdlContext&) = delete;
 
+    void initSubSystem(SDL_InitFlags flags) {
+        if (!SDL_InitSubSystem(flags)) {
+            logging::FAILED_LOG("SDL_InitSubSystem", SDL_GetError());
+            throw std::runtime_error("sdl: failed to init subsystem");
+        }
+    }
+
 }; // class SdlContext
 
 } // namespace avplayer
