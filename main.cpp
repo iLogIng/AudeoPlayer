@@ -2,7 +2,6 @@
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_keycode.h>
-#include <SDL3/SDL_timer.h>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -15,18 +14,7 @@
 #include "output/Window.hpp"
 #include "player/MediaPlayer.hpp"
 #include "player/PlayerEvent.hpp"
-
-namespace
-{
-
-// 一次性排空定时器 只推送事件，不直接操作播放器
-Uint32 SDLCALL onDrainTimer(void*, SDL_TimerID, Uint32)
-{
-    // 队列满时稍后重试
-    return avplayer::AppEvent::push(avplayer::AppEventCode::DrainTimeout) ? 0 : 10;
-}
-
-} // namespace
+#include "player/VideoPresenter.hpp"
 
 int main(int argc, char* argv[])
 {
@@ -53,48 +41,48 @@ int main(int argc, char* argv[])
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 
     try {
-        // 音频优先 默认不创建窗口
-        SDL_InitFlags flags = SDL_INIT_AUDIO | SDL_INIT_EVENTS;
-        if (showWindow) flags |= SDL_INIT_VIDEO;
-
-        avplayer::SdlContext sdl(flags);
+        // SDL 上下文
+        avplayer::SdlContext sdl(SDL_INIT_AUDIO | SDL_INIT_EVENTS);
 
         if (!avplayer::AppEvent::init()) {
             std::cerr << "fatal: can not register app events\n";
             return -1;
         }
 
+        // 监听系统信号
         avplayer::SignalListener signalListener;
         if (!signalListener.start()) {
             std::cerr << "fatal: can not start signal listener\n";
             return -1;
         }
 
+        // 保证 player 比 window 先析构
         std::unique_ptr<avplayer::Window> window;
-        if (showWindow) {
+
+        avplayer::MediaPlayer player(filepath);
+        player.open();
+
+        if (player.hasVideo() || showWindow) {
+            sdl.initSubSystem(SDL_INIT_VIDEO);
             window = std::make_unique<avplayer::Window>(avplayer::WindowConfig{});
         }
 
-        avplayer::MediaPlayer player(filepath);
         player.setEventCallback(
-        [](avplayer::PlayerEvent event) {
-            switch (event) {
-            case avplayer::PlayerEvent::AudioDecodeEof:
-                avplayer::AppEvent::push(avplayer::AppEventCode::AudioDecodeEof);
-                break;
-            case avplayer::PlayerEvent::Error:
-                avplayer::AppEvent::push(avplayer::AppEventCode::PlayerError);
-                break;
-            case avplayer::PlayerEvent::VideoDecodeEof:
-                break;
-            }
-        });
-        player.start();
+            [](avplayer::PlayerEvent event) {
+                switch (event) {
+                case avplayer::PlayerEvent::PlaybackFinished:
+                    avplayer::AppEvent::push(avplayer::AppEventCode::PlaybackFinished);
+                    break;
+                case avplayer::PlayerEvent::Error:
+                    avplayer::AppEvent::push(avplayer::AppEventCode::PlayerError);
+                    break;
+                }
+            });
+        player.start(window.get());
+
+        avplayer::VideoPresenter presenter(player);
 
         bool running = true;
-        bool draining = false;
-        SDL_TimerID drainTimer = 0;
-
         while (running) {
             SDL_Event event;
             if (!SDL_WaitEvent(&event)) {
@@ -102,11 +90,9 @@ int main(int argc, char* argv[])
                 break;
             }
 
-            // 窗口事件
             if (window && !window->processEvent(event))
                 running = false;
 
-            // 无窗口时的退出事件
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
             } else if (event.type == SDL_EVENT_KEY_DOWN
@@ -114,43 +100,29 @@ int main(int argc, char* argv[])
                 running = false;
             }
 
-            // 应用事件
             if (avplayer::AppEvent::isAppEvent(event)) {
                 switch (avplayer::AppEvent::code(event)) {
                 case avplayer::AppEventCode::Quit:
                 case avplayer::AppEventCode::PlayerError:
+                case avplayer::AppEventCode::PlaybackFinished:
                     running = false;
                     break;
 
-                case avplayer::AppEventCode::AudioDecodeEof:
-                    if (!draining) {
-                        const uint32_t drainMs = player.drainDurationMs();
-                        if (drainMs == 0) {
-                            running = false;
-                        } else {
-                            draining = true;
-                            drainTimer = SDL_AddTimer(drainMs, onDrainTimer, nullptr);
-                            if (drainTimer == 0) running = false;
-                        }
-                    }
+                case avplayer::AppEventCode::VideoFrameReady:
+                    presenter.onFrameReady();
                     break;
 
-                case avplayer::AppEventCode::DrainTimeout:
-                    if (draining) running = false;
+                case avplayer::AppEventCode::FrameDue:
+                    presenter.onFrameDue();
                     break;
                 }
             }
 
-            // 事件之外的检查
-            if (player.error()) running = false;
+            if (player.error())
+                running = false;
         }
 
-        if (drainTimer) {
-            SDL_RemoveTimer(drainTimer);
-            drainTimer = 0;
-        }
-
-        // 停止信号监听
+        presenter.cancel();
         signalListener.stop();
         player.stop();
 
