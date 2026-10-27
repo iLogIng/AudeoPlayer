@@ -18,6 +18,9 @@ pkg_check_modules(SWRESAMPLE REQUIRED IMPORTED_TARGET libswresample)
 
 # find SDL3
 find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
+
+# pthread (signalfd / eventfd 信号监听)
+find_package(Threads REQUIRED)
 # 如果是静态链接 SDL3，可能需要同时查找 SDL3_main 并链接 SDL3::SDL3_main
 # 同时需要附加
 # find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3 SDL3_main)
@@ -25,7 +28,9 @@ find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(avplayer_core STATIC
+    src/core/AppEvent.cpp
     src/core/PacketQueue.cpp
+    src/core/SignalListener.cpp
     src/media/Demuxer.cpp
     src/media/AudioDecoder.cpp
     src/media/Resampler.cpp
@@ -33,6 +38,7 @@ add_library(avplayer_core STATIC
     src/output/AudioOutput.cpp
     src/output/Window.cpp
     src/player/AudioPlayer.cpp
+    src/sync/AudioClock.cpp
 )
 
 target_include_directories(avplayer_core PUBLIC
@@ -47,6 +53,7 @@ target_link_libraries(avplayer_core PUBLIC
     PkgConfig::SWRESAMPLE
     PkgConfig::SWSCALE
     SDL3::SDL3
+    Threads::Threads
     # PkgConfig::AVFILTER   # 启用滤镜
     # SDL3::SDL3_main       # 静态链接 SDL3 且需要入口替换时取消注释
 )
