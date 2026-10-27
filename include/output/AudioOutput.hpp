@@ -8,6 +8,7 @@
 #include <stop_token>
 
 #include "output/PcmRingBuffer.hpp"
+#include "sync/AudioClock.hpp"
 
 namespace avplayer
 {
@@ -25,7 +26,7 @@ public:
 
     void open();
     // 写入环形缓冲区 队列满时阻塞 可被 stop_token 中断
-    bool push(const uint8_t *pcmData, size_t bytes, std::stop_token st);
+    bool push(const uint8_t *pcmData, size_t bytes, int64_t ptsUs, std::stop_token st);
     // 文件结束时强制恢复设备 处理短于预缓冲的文件
     void resume();
     size_t queuedBytes() const;
@@ -34,7 +35,13 @@ public:
     void close();
 
     const SDL_AudioSpec& spec() const { return m_spec; }
+    const AudioClock& clock() const { return m_clock; }
     size_t underrunCount() const { return m_underruns.load(); }
+
+    uint32_t bytesPerSecond() const { return static_cast<uint32_t>(m_bytesPerSecond); }
+    uint32_t deviceBufferDurationMs() const { return m_deviceBufferDurationMs; }
+    // 剩余排队数据 + 设备缓冲的估算时长
+    uint32_t drainDurationMs() const;
 
 private:
     static void SDLCALL streamCallback(void *userdata, SDL_AudioStream *stream,
@@ -45,6 +52,12 @@ private:
     SDL_AudioSpec m_spec{};
     std::unique_ptr<PcmRingBuffer> m_ring;
     size_t m_prebufferBytes = 0;
+    size_t m_bytesPerSecond = 0;
+    size_t m_frameBytes = 0;
+    uint32_t m_deviceBufferDurationMs = 0;
+    bool m_basePtsSet = false;
+
+    AudioClock m_clock;
 
     std::atomic<bool> m_closing{false};
     std::atomic<bool> m_paused{false};

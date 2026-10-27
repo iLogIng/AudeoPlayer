@@ -18,6 +18,8 @@ constexpr size_t kBufferDurationMs = 250;
 constexpr size_t kPrebufferDurationMs = 100;
 // SDL 回调中使用的栈缓冲大小
 constexpr size_t kCallbackBufferBytes = 4096;
+// 排空时额外增加的余量
+constexpr uint32_t kDrainMarginMs = 20;
 
 } // namespace
 
@@ -33,7 +35,9 @@ void AudioOutput::open()
 
     // SDL 音频设备描述符
     SDL_AudioSpec deviceSpec{};
-    if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &deviceSpec, nullptr)) {
+    int sampleFrames = 0;
+    if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                  &deviceSpec, &sampleFrames)) {
         logging::FAILED_LOG("AudioOutput::open", SDL_GetError());
         throw std::runtime_error("audio output: can not get device format");
     }
@@ -46,18 +50,26 @@ void AudioOutput::open()
         throw std::runtime_error("audio output: invalid audio device format");
     }
 
+    // 帧字节数
+    m_frameBytes = static_cast<size_t>(m_spec.channels) * bytesPerSample;
     // 每秒字节数
-    const size_t bytesPerSecond = static_cast<size_t>(m_spec.freq)
-                                * static_cast<size_t>(m_spec.channels)
-                                * bytesPerSample;
+    m_bytesPerSecond = static_cast<size_t>(m_spec.freq) * m_frameBytes;
+    m_deviceBufferDurationMs = sampleFrames > 0
+        ? static_cast<uint32_t>(
+              static_cast<uint64_t>(sampleFrames) * 1000 / m_spec.freq)
+        : 0;
 
     // 创建环形缓冲区
     const size_t capacityBytes = std::max<size_t>(
-        bytesPerSecond * kBufferDurationMs / 1000, 1);
-    // 预缓冲区大小
+        m_bytesPerSecond * kBufferDurationMs / 1000, 1);
     m_prebufferBytes = std::max<size_t>(
-        bytesPerSecond * kPrebufferDurationMs / 1000, 1);
+        m_bytesPerSecond * kPrebufferDurationMs / 1000, 1);
     m_ring = std::make_unique<PcmRingBuffer>(capacityBytes);
+
+    // 初始化音频时钟
+    m_clock.reset(m_spec.freq);
+    m_clock.setDeviceLatencyUs(static_cast<int64_t>(m_deviceBufferDurationMs) * 1000);
+    m_basePtsSet = false;
 
     // 使用回调模式打开音频设备流 设备默认处于暂停状态
     m_stream = SDL_OpenAudioDeviceStream(
@@ -67,14 +79,26 @@ void AudioOutput::open()
         logging::FAILED_LOG("AudioOutput::open", SDL_GetError());
         m_ring.reset();
         m_prebufferBytes = 0;
+        m_bytesPerSecond = 0;
+        m_frameBytes = 0;
+        m_deviceBufferDurationMs = 0;
+        m_clock.reset(0);
         throw std::runtime_error("audio output: can not open audio stream");
     }
 }
 
 // 写入 PCM 数据
-bool AudioOutput::push(const uint8_t *pcmData, size_t bytes, std::stop_token st)
+bool AudioOutput::push(const uint8_t *pcmData, size_t bytes, int64_t ptsUs,
+                       std::stop_token st)
 {
     if (m_closing.load() || !m_ring) return false;
+
+    // 第一段数据用于建立音频时钟基准
+    if (!m_basePtsSet) {
+        m_clock.setBasePtsUs(ptsUs);
+        m_basePtsSet = true;
+    }
+
     if (!m_ring->write(pcmData, bytes, st)) return false;
 
     // 达到预缓冲后自动开始播放
@@ -88,8 +112,10 @@ void AudioOutput::resume()
     if (m_closing.load() || m_paused.load() || m_deviceResumed.load()) return;
     if (!m_stream) return;
 
+    // 恢复SDL音频流设备
     if (SDL_ResumeAudioStreamDevice(m_stream)) {
         m_deviceResumed.store(true);
+        m_clock.resume();
     } else {
         logging::ERROR_LOG("AudioOutput::resume", SDL_GetError());
     }
@@ -107,6 +133,17 @@ size_t AudioOutput::queuedBytes() const
     return queued;
 }
 
+// 估算剩余播放时长
+uint32_t AudioOutput::drainDurationMs() const
+{
+    if (m_bytesPerSecond == 0) return 0;
+
+    // 队列中缓冲的时长
+    const uint64_t queuedMs =
+        static_cast<uint64_t>(queuedBytes()) * 1000 / m_bytesPerSecond;
+    return static_cast<uint32_t>(queuedMs + m_deviceBufferDurationMs + kDrainMarginMs);
+}
+
 // 暂停音频流输出设备
 void AudioOutput::pause(bool paused)
 {
@@ -114,10 +151,12 @@ void AudioOutput::pause(bool paused)
     m_paused.store(paused);
 
     if (paused) {
+        m_clock.pause();
         SDL_PauseAudioStreamDevice(m_stream);
         return;
     }
 
+    m_clock.resume();
     if (m_deviceResumed.load()) {
         SDL_ResumeAudioStreamDevice(m_stream);
     } else {
@@ -152,6 +191,11 @@ void AudioOutput::close()
     // 最后释放环形缓冲区
     m_ring.reset();
     m_prebufferBytes = 0;
+    m_bytesPerSecond = 0;
+    m_frameBytes = 0;
+    m_deviceBufferDurationMs = 0;
+    m_basePtsSet = false;
+    m_clock.reset(0);
     m_deviceResumed.store(false);
     m_paused.store(false);
     m_closing.store(false);
@@ -173,8 +217,10 @@ void AudioOutput::maybeResume()
     if (!m_stream || !m_ring) return;
     if (m_ring->availableRead() < m_prebufferBytes) return;
 
+    // 恢复SDL音频流设备
     if (SDL_ResumeAudioStreamDevice(m_stream)) {
         m_deviceResumed.store(true);
+        m_clock.resume();
     } else {
         logging::ERROR_LOG("AudioOutput::maybeResume", SDL_GetError());
     }
@@ -186,13 +232,14 @@ void SDLCALL AudioOutput::streamCallback(void *userdata, SDL_AudioStream *stream
 {
     (void)totalAmount;
 
-    // PCM 数据
     auto *self = static_cast<AudioOutput *>(userdata);
     if (!self || self->m_closing.load() || self->m_paused.load()) return;
     if (additionalAmount <= 0 || !self->m_ring) return;
 
     uint8_t buffer[kCallbackBufferBytes];
     size_t remaining = static_cast<size_t>(additionalAmount);
+    // 已送入设备的字节数
+    size_t fedBytes = 0;
 
     while (remaining > 0) {
         const size_t want = std::min(remaining, sizeof(buffer));
@@ -203,11 +250,27 @@ void SDLCALL AudioOutput::streamCallback(void *userdata, SDL_AudioStream *stream
             break;
         }
 
-        // 向音频设备推送PCM数据
         if (!SDL_PutAudioStreamData(stream, buffer, static_cast<int>(n)))
             break;
 
+        fedBytes += n;
         remaining -= n;
+    }
+
+    // 更新音频时钟
+    if (self->m_frameBytes > 0 && fedBytes > 0) {
+        // 已送入 SDL 的帧数
+        self->m_clock.onFramesConsumed(
+            static_cast<int64_t>(fedBytes / self->m_frameBytes));
+    }
+
+    if (self->m_bytesPerSecond > 0) {
+        // 仍在 SDL 音频设备中排队的数据
+        int sdlQueued = SDL_GetAudioStreamQueued(stream);
+        if (sdlQueued < 0) sdlQueued = 0;
+        self->m_clock.setBufferedUs(
+            static_cast<int64_t>(sdlQueued) * 1'000'000
+            / static_cast<int64_t>(self->m_bytesPerSecond));
     }
 }
 
