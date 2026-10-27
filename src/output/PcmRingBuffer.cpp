@@ -6,25 +6,8 @@
 namespace avplayer
 {
 
-namespace
-{
-
-// 将容量向上取整到 2 的幂 便于用掩码定位
-size_t roundUpPowerOfTwo(size_t value)
-{
-    if (value <= 1) return 1;
-
-    size_t capacity = 1;
-    while (capacity < value)
-        capacity <<= 1;
-    return capacity;
-}
-
-} // namespace
-
 PcmRingBuffer::PcmRingBuffer(size_t capacityBytes)
-    : m_capacity(roundUpPowerOfTwo(capacityBytes))
-    , m_mask(m_capacity - 1)
+    : m_capacity(capacityBytes > 0 ? capacityBytes : 1)
     , m_data(m_capacity)
 {
 }
@@ -47,7 +30,7 @@ bool PcmRingBuffer::write(const uint8_t *pcmData, size_t bytes, std::stop_token 
 
         if (m_capacity - used >= bytes) {
             // 处理回绕 最多分两段拷贝
-            const size_t index = writePos & m_mask;
+            const size_t index = writePos % m_capacity;
             const size_t first = std::min(bytes, m_capacity - index);
             std::memcpy(m_data.data() + index, pcmData, first);
             if (bytes > first)
@@ -73,7 +56,7 @@ size_t PcmRingBuffer::read(uint8_t *dst, size_t maxBytes)
     if (n == 0) return 0;
 
     // 处理回绕 最多分两段拷贝
-    const size_t index = readPos & m_mask;
+    const size_t index = readPos % m_capacity;
     const size_t first = std::min(n, m_capacity - index);
     std::memcpy(dst, m_data.data() + index, first);
     if (n > first)

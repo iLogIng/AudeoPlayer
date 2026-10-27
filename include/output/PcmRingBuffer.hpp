@@ -37,10 +37,9 @@ public:
 
 private:
     size_t m_capacity = 0;
-    size_t m_mask     = 0;
     std::vector<uint8_t> m_data;
 
-    // 单调递增的位置 写入时用低位掩码定位
+    // 单调递增的位置 写入时对容量取模定位
     std::atomic<size_t> m_readPos{0};
     std::atomic<size_t> m_writePos{0};
     // 空间变化/中止通知序号 用于唤醒生产者
