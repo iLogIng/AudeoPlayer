@@ -4,6 +4,7 @@
 #include <new>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 #include "Log.hpp"
 
@@ -39,7 +40,8 @@ void AudioPlayer::start()
         // 打开音频输出设备
         m_output.open();
         // 重采样
-        m_resampler.configure(m_decoder.context(), m_output.spec());
+        m_resampler.configure(m_decoder.context(), m_output.spec(),
+                              m_demuxer.audioTimeBase());
     } catch (...) {
         m_started.store(false);
         throw;
@@ -97,6 +99,43 @@ std::exception_ptr AudioPlayer::error() const
 {
     std::lock_guard lock(m_errorMutex);
     return m_error;
+}
+
+// 设置播放器事件回调 必须在 start() 之前调用
+void AudioPlayer::setEventCallback(PlayerEventCallback callback)
+{
+    std::lock_guard lock(m_callbackMutex);
+    m_eventCallback = std::move(callback);
+}
+
+// 估算剩余播放时长
+uint32_t AudioPlayer::drainDurationMs() const
+{
+    return m_output.drainDurationMs();
+}
+
+// 返回音频播放时钟 用于同步
+const AudioClock& AudioPlayer::audioClock() const
+{
+    return m_output.clock();
+}
+
+// 通知事件回调
+void AudioPlayer::notifyEvent(PlayerEvent event)
+{
+    PlayerEventCallback callback;
+    {
+        std::lock_guard lock(m_callbackMutex);
+        callback = m_eventCallback;
+    }
+
+    if (!callback) return;
+
+    try {
+        callback(event);
+    } catch (...) {
+        // 回调异常不能影响 worker 线程
+    }
 }
 
 // 解封装循环
@@ -168,7 +207,7 @@ void AudioPlayer::decodeLoop(std::stop_token st)
             av_frame_unref(frame.get());
             if (converted && !chunk.data.empty()) {
                 // 推入播放设备
-                if (!m_output.push(chunk.data.data(), chunk.data.size(), st))
+                if (!m_output.push(chunk.data.data(), chunk.data.size(), chunk.ptsUs, st))
                     return false;
             }
         }
@@ -186,7 +225,7 @@ void AudioPlayer::decodeLoop(std::stop_token st)
 
         PcmChunk chunk;
         while (m_resampler.flush(chunk)) {
-            if (!m_output.push(chunk.data.data(), chunk.data.size(), st))
+            if (!m_output.push(chunk.data.data(), chunk.data.size(), chunk.ptsUs, st))
                 return false;
             chunk = PcmChunk{};
         }
@@ -206,6 +245,7 @@ void AudioPlayer::decodeLoop(std::stop_token st)
                 // 处理短于预缓冲的文件
                 m_output.resume();
                 m_decodeDone.store(true);
+                notifyEvent(PlayerEvent::Eof);
             }
             return;
         }
@@ -235,8 +275,10 @@ void AudioPlayer::decodeLoop(std::stop_token st)
 // 退出工作线程
 void AudioPlayer::onWorkerExit(std::exception_ptr error)
 {
-    if (error)
+    if (error) {
         setError(error);
+        notifyEvent(PlayerEvent::Error);
+    }
 
     m_decodeDone.store(true);
     m_packetQueue.abort();

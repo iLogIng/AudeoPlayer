@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -15,10 +17,18 @@
 namespace avplayer
 {
 
+enum class PlayerEvent
+{
+    Eof,     // 解码结束 所有 PCM 已送入输出
+    Error,   // worker 线程异常
+};
+
 // 音频播放器 负责编排解封装、解码、重采样、输出
 class AudioPlayer
 {
 public:
+    using PlayerEventCallback = std::function<void(PlayerEvent)>;
+
     explicit AudioPlayer(const std::filesystem::path& path);
     ~AudioPlayer();
 
@@ -29,7 +39,12 @@ public:
     void stop();
     void pause(bool paused);
 
+    // 必须在 start() 之前调用
+    void setEventCallback(PlayerEventCallback callback);
+
     bool finished() const;
+    uint32_t drainDurationMs() const;
+    const AudioClock& audioClock() const;
     std::exception_ptr error() const;
 
 private:
@@ -37,6 +52,7 @@ private:
     void decodeLoop(std::stop_token st);
     void onWorkerExit(std::exception_ptr error);
     void setError(std::exception_ptr error);
+    void notifyEvent(PlayerEvent event);
 
     std::filesystem::path m_path;
     Demuxer m_demuxer;
@@ -52,6 +68,9 @@ private:
 
     mutable std::mutex m_errorMutex;
     std::exception_ptr m_error;
+
+    mutable std::mutex m_callbackMutex;
+    PlayerEventCallback m_eventCallback;
 
 }; // class AudioPlayer
 
