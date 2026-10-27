@@ -13,7 +13,8 @@
 #include "core/SdlContext.hpp"
 #include "core/SignalListener.hpp"
 #include "output/Window.hpp"
-#include "player/AudioPlayer.hpp"
+#include "player/MediaPlayer.hpp"
+#include "player/PlayerEvent.hpp"
 
 namespace
 {
@@ -74,13 +75,19 @@ int main(int argc, char* argv[])
             window = std::make_unique<avplayer::Window>(avplayer::WindowConfig{});
         }
 
-        avplayer::AudioPlayer player(filepath);
+        avplayer::MediaPlayer player(filepath);
         player.setEventCallback(
         [](avplayer::PlayerEvent event) {
-            avplayer::AppEvent::push(
-                event == avplayer::PlayerEvent::AudioDecodeEof
-                    ? avplayer::AppEventCode::AudioDecodeEof
-                    : avplayer::AppEventCode::PlayerError);
+            switch (event) {
+            case avplayer::PlayerEvent::AudioDecodeEof:
+                avplayer::AppEvent::push(avplayer::AppEventCode::AudioDecodeEof);
+                break;
+            case avplayer::PlayerEvent::Error:
+                avplayer::AppEvent::push(avplayer::AppEventCode::PlayerError);
+                break;
+            case avplayer::PlayerEvent::VideoDecodeEof:
+                break;
+            }
         });
         player.start();
 
