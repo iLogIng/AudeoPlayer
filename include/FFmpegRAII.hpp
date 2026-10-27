@@ -46,11 +46,19 @@ struct SwrContextDeleter
     }
 };
 
+struct SwsContextDeleter
+{
+    void operator()(SwsContext *ctx) const {
+        if (ctx) sws_freeContext(ctx);
+    }
+};
+
 using PacketPtr        = std::unique_ptr<AVPacket, PacketDeleter>;
 using FramePtr         = std::unique_ptr<AVFrame, FrameDeleter>;
 using FormatContextPtr = std::unique_ptr<AVFormatContext, FormatContextDeleter>;
 using CodecContextPtr  = std::unique_ptr<AVCodecContext, CodecContextDeleter>;
 using SwrContextPtr    = std::unique_ptr<SwrContext, SwrContextDeleter>;
+using SwsContextPtr    = std::unique_ptr<SwsContext, SwsContextDeleter>;
 
 inline PacketPtr makePacket() {
     AVPacket *pkt = av_packet_alloc();

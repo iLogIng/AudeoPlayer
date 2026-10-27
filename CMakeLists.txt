@@ -34,11 +34,17 @@ add_library(avplayer_core STATIC
     src/media/Demuxer.cpp
     src/media/AudioDecoder.cpp
     src/media/Resampler.cpp
+    src/media/VideoDecoder.cpp
+    src/media/VideoConverter.cpp
+    src/media/VideoFrameQueue.cpp
     src/output/PcmRingBuffer.cpp
     src/output/AudioOutput.cpp
+    src/output/VideoOutput.cpp
     src/output/Window.cpp
     src/player/AudioPipeline.cpp
     src/player/MediaPlayer.cpp
+    src/player/VideoPipeline.cpp
+    src/player/VideoPresenter.cpp
     src/sync/AudioClock.cpp
 )
 

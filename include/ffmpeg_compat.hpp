@@ -11,5 +11,7 @@ extern "C" {
 #include <libavutil/samplefmt.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/mem.h>
+#include <libavutil/imgutils.h>
 #include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
 }
