@@ -22,14 +22,22 @@ public:
     int readPacket(AVPacket *pkt);
     void close();
 
+    // 音频流
     int audioStreamIndex() const { return m_audioStreamIdx; }
     const AVStream *audioStream() const;
-    AVFormatContext *formatContext() const { return m_fmtctx.get(); }
     AVRational audioTimeBase() const;
+
+    // 视频流
+    int videoStreamIndex() const { return m_videoStreamIdx; }
+    const AVStream *videoStream() const;
+    AVRational videoTimeBase() const;
+
+    AVFormatContext *formatContext() const { return m_fmtctx.get(); }
 
 private:
     ffmpeg::FormatContextPtr m_fmtctx;
     int m_audioStreamIdx = -1;
+    int m_videoStreamIdx = -1;
 
 }; // class Demuxer
 

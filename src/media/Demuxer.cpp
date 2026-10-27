@@ -31,13 +31,16 @@ void Demuxer::open(const std::filesystem::path& path)
         throw std::runtime_error("demuxer: can not find stream info");
     }
 
-    // 获取音频流数据位置索引
+    // 分别查找音频流和视频流
     m_audioStreamIdx = av_find_best_stream(
         m_fmtctx.get(), AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-    // 音频流不存在
-    if (m_audioStreamIdx < 0) {
-        logging::FAILED_LOG("Demuxer::open", "can not find the best audio stream");
-        throw std::runtime_error("demuxer: can not find the best audio stream");
+    m_videoStreamIdx = av_find_best_stream(
+        m_fmtctx.get(), AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+
+    // 至少需要存在一条音视频流
+    if (m_audioStreamIdx < 0 && m_videoStreamIdx < 0) {
+        logging::FAILED_LOG("Demuxer::open", "can not find audio or video stream");
+        throw std::runtime_error("demuxer: can not find audio or video stream");
     }
 }
 
@@ -54,6 +57,7 @@ void Demuxer::close()
 {
     m_fmtctx.reset();
     m_audioStreamIdx = -1;
+    m_videoStreamIdx = -1;
 }
 
 // 音频数据流
@@ -67,6 +71,23 @@ const AVStream *Demuxer::audioStream() const
 AVRational Demuxer::audioTimeBase() const
 {
     const AVStream *stream = audioStream();
+    if (!stream)
+        return AVRational{0, 1};
+    return stream->time_base;
+}
+
+// 视频数据流
+const AVStream *Demuxer::videoStream() const
+{
+    if (!m_fmtctx || m_videoStreamIdx < 0)
+        return nullptr;
+    return m_fmtctx->streams[m_videoStreamIdx];
+}
+
+// 视频流中时间戳
+AVRational Demuxer::videoTimeBase() const
+{
+    const AVStream *stream = videoStream();
     if (!stream)
         return AVRational{0, 1};
     return stream->time_base;
