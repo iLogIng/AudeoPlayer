@@ -28,7 +28,8 @@ public:
     Window& operator=(const Window&) = delete;
 
     bool shouldClose() const { return !m_running; }
-    void pollEvents();
+    // 处理窗口相关事件 返回是否仍运行
+    bool processEvent(const SDL_Event& event);
     void requestClose() { m_running = false; }
 
     int width() const;
@@ -40,7 +41,6 @@ public:
 private:
     SDL_Window      *m_window   = nullptr;
     SDL_Renderer    *m_renderer = nullptr;
-    SDL_Event        m_event{};
     bool             m_running  = true;
 
 }; // class Window

@@ -33,16 +33,15 @@ Window::~Window()
     if (m_window) SDL_DestroyWindow(m_window);
 }
 
-void Window::pollEvents()
+bool Window::processEvent(const SDL_Event& event)
 {
-    while (SDL_PollEvent(&m_event)) {
-        if (m_event.type == SDL_EVENT_QUIT) {
-            m_running = false;
-        } else if (m_event.type == SDL_EVENT_KEY_DOWN
-                && m_event.key.key == SDLK_ESCAPE) {
-            m_running = false;
-        }
+    if (event.type == SDL_EVENT_QUIT) {
+        m_running = false;
+    } else if (event.type == SDL_EVENT_KEY_DOWN
+            && event.key.key == SDLK_ESCAPE) {
+        m_running = false;
     }
+    return m_running;
 }
 
 int Window::width() const
