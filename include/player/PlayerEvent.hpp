@@ -5,8 +5,7 @@ namespace avplayer
 
 enum class PlayerEvent
 {
-    AudioDecodeEof,
-    VideoDecodeEof,
+    PlaybackFinished,
     Error,
 };
 
