@@ -67,7 +67,7 @@ const AVStream *Demuxer::audioStream() const
         return nullptr;
     return m_fmtctx->streams[m_audioStreamIdx];
 }
-// 流中时间戳
+// 音频流中时间戳
 AVRational Demuxer::audioTimeBase() const
 {
     const AVStream *stream = audioStream();
