@@ -8,10 +8,11 @@ namespace avplayer
 // 应用统一事件码 通过一个自定义 SDL 事件类型传递
 enum class AppEventCode : int
 {
-    Quit,          // 外部退出信号
-    AudioDecodeEof, // 解码结束（不是播放结束）
-    PlayerError,   // 播放器内部错误
-    DrainTimeout,  // 设备缓冲排空完成
+    Quit,              // 外部退出信号
+    PlayerError,       // 播放器内部错误
+    VideoFrameReady,   // 视频解码线程已放入新帧
+    FrameDue,          // 下一视频帧到达展示时间
+    PlaybackFinished,  // 音频/视频均播放完成
 };
 
 // 自定义 SDL 事件封装
