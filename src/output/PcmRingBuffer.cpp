@@ -6,107 +6,120 @@
 namespace avplayer
 {
 
+namespace
+{
+
+// 将容量向上取整到 2 的幂 便于用掩码定位
+size_t roundUpPowerOfTwo(size_t value)
+{
+    if (value <= 1) return 1;
+
+    size_t capacity = 1;
+    while (capacity < value)
+        capacity <<= 1;
+    return capacity;
+}
+
+} // namespace
+
 PcmRingBuffer::PcmRingBuffer(size_t capacityBytes)
-    : m_data(capacityBytes > 0 ? capacityBytes : 1)
-    , m_capacity(capacityBytes > 0 ? capacityBytes : 1)
+    : m_capacity(roundUpPowerOfTwo(capacityBytes))
+    , m_mask(m_capacity - 1)
+    , m_data(m_capacity)
 {
 }
 
-// 生产写入PCM数据
+// 生产者写入数据 队列满时阻塞
 bool PcmRingBuffer::write(const uint8_t *pcmData, size_t bytes, std::stop_token st)
 {
     if (bytes == 0) return true;
-    // 单次写入不能超过整个缓冲区
     if (!pcmData || bytes > m_capacity) return false;
 
-    std::unique_lock lock(m_mutex);
-    // 等待PCM数据消费
-    m_notFull.wait(lock, st, [this, bytes] {
-        return m_aborted || availableWriteLocked() >= bytes;
-    });
+    while (true) {
+        // 先取通知序号 再检查中止和空间 避免丢失唤醒
+        const size_t seq = m_spaceSeq.load(std::memory_order_acquire);
+        if (m_aborted.load(std::memory_order_acquire) || st.stop_requested())
+            return false;
 
-    if (m_aborted || st.stop_requested()) return false;
+        const size_t readPos  = m_readPos.load(std::memory_order_acquire);
+        const size_t writePos = m_writePos.load(std::memory_order_relaxed);
+        const size_t used     = writePos - readPos;
 
-    // 处理回绕 最多分两段拷贝
-    const size_t first = std::min(bytes, m_capacity - m_writePos);
-    std::memcpy(m_data.data() + m_writePos, pcmData, first);
-    if (bytes > first)
-        std::memcpy(m_data.data(), pcmData + first, bytes - first);
+        if (m_capacity - used >= bytes) {
+            // 处理回绕 最多分两段拷贝
+            const size_t index = writePos & m_mask;
+            const size_t first = std::min(bytes, m_capacity - index);
+            std::memcpy(m_data.data() + index, pcmData, first);
+            if (bytes > first)
+                std::memcpy(m_data.data(), pcmData + first, bytes - first);
 
-    m_writePos = (m_writePos + bytes) % m_capacity;
-    m_size += bytes;
-    return true;
+            m_writePos.store(writePos + bytes, std::memory_order_release);
+            return true;
+        }
+
+        // 等待消费者释放空间 stop 由 abort() 唤醒
+        m_spaceSeq.wait(seq, std::memory_order_acquire);
+    }
 }
 
 // 消费者读取数据 非阻塞
-// 返回真实读取的数据量
 size_t PcmRingBuffer::read(uint8_t *dst, size_t maxBytes)
 {
     if (!dst || maxBytes == 0) return 0;
 
-    size_t n = 0;
-    {
-        std::lock_guard lock(m_mutex);
-        n = std::min(maxBytes, m_size);
-        if (n == 0) return 0;
+    const size_t writePos = m_writePos.load(std::memory_order_acquire);
+    const size_t readPos  = m_readPos.load(std::memory_order_relaxed);
+    const size_t n        = std::min(maxBytes, writePos - readPos);
+    if (n == 0) return 0;
 
-        // 处理回绕 最多分两段拷贝
-        const size_t first = std::min(n, m_capacity - m_readPos);
-        std::memcpy(dst, m_data.data() + m_readPos, first);
-        if (n > first)
-            std::memcpy(dst + first, m_data.data(), n - first);
+    // 处理回绕 最多分两段拷贝
+    const size_t index = readPos & m_mask;
+    const size_t first = std::min(n, m_capacity - index);
+    std::memcpy(dst, m_data.data() + index, first);
+    if (n > first)
+        std::memcpy(dst + first, m_data.data(), n - first);
 
-        m_readPos = (m_readPos + n) % m_capacity;
-        m_size -= n;
-    }
-
-    // 唤醒PCM数据生产
-    m_notFull.notify_one();
+    m_readPos.store(readPos + n, std::memory_order_release);
+    m_spaceSeq.fetch_add(1, std::memory_order_release);
+    // 生产者可生产
+    m_spaceSeq.notify_one();
     return n;
 }
 
-// 可读的数据大小
+// 剩余可读数据量
 size_t PcmRingBuffer::availableRead() const
 {
-    std::lock_guard lock(m_mutex);
-    return m_size;
+    // 先读 readPos 再读 writePos 避免第三方线程查询时出现无符号下溢
+    const size_t readPos  = m_readPos.load(std::memory_order_acquire);
+    const size_t writePos = m_writePos.load(std::memory_order_acquire);
+    return writePos - readPos;
 }
 
-// 可写的空间大小
+// 可写入数据量
 size_t PcmRingBuffer::availableWrite() const
 {
-    std::lock_guard lock(m_mutex);
-    return availableWriteLocked();
+    const size_t available = availableRead();
+    return available < m_capacity ? m_capacity - available : 0;
 }
 
-// 缓冲的总容量
 size_t PcmRingBuffer::capacity() const
 {
     return m_capacity;
 }
 
-// 清空缓冲
 void PcmRingBuffer::clear()
 {
-    std::lock_guard lock(m_mutex);
-    m_readPos  = 0;
-    m_writePos = 0;
-    m_size     = 0;
-    m_notFull.notify_all();
+    m_readPos.store(0, std::memory_order_release);
+    m_writePos.store(0, std::memory_order_release);
+    m_spaceSeq.fetch_add(1, std::memory_order_release);
+    m_spaceSeq.notify_all();
 }
 
-// 中断
 void PcmRingBuffer::abort()
 {
-    std::lock_guard lock(m_mutex);
-    m_aborted = true;
-    m_notFull.notify_all();
-}
-
-// 写可锁
-size_t PcmRingBuffer::availableWriteLocked() const
-{
-    return m_capacity - m_size;
+    m_aborted.store(true, std::memory_order_release);
+    m_spaceSeq.fetch_add(1, std::memory_order_release);
+    m_spaceSeq.notify_all();
 }
 
 } // namespace avplayer
