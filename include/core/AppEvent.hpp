@@ -9,7 +9,7 @@ namespace avplayer
 enum class AppEventCode : int
 {
     Quit,          // 外部退出信号
-    PlayerEof,     // 解码结束（不是播放结束）
+    AudioDecodeEof, // 解码结束（不是播放结束）
     PlayerError,   // 播放器内部错误
     DrainTimeout,  // 设备缓冲排空完成
 };

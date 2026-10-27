@@ -245,7 +245,7 @@ void AudioPlayer::decodeLoop(std::stop_token st)
                 // 处理短于预缓冲的文件
                 m_output.resume();
                 m_decodeDone.store(true);
-                notifyEvent(PlayerEvent::Eof);
+                notifyEvent(PlayerEvent::AudioDecodeEof);
             }
             return;
         }

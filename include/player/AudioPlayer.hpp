@@ -19,7 +19,7 @@ namespace avplayer
 
 enum class PlayerEvent
 {
-    Eof,     // 解码结束 所有 PCM 已送入输出
+    AudioDecodeEof, // 解码结束 所有 PCM 已送入输出
     Error,   // worker 线程异常
 };
 
