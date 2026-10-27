@@ -37,7 +37,8 @@ add_library(avplayer_core STATIC
     src/output/PcmRingBuffer.cpp
     src/output/AudioOutput.cpp
     src/output/Window.cpp
-    src/player/AudioPlayer.cpp
+    src/player/AudioPipeline.cpp
+    src/player/MediaPlayer.cpp
     src/sync/AudioClock.cpp
 )
 
