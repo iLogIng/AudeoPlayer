@@ -10,7 +10,7 @@
 namespace avplayer
 {
 
-    // 将SDL_AudioFormat转换为FFmpeg::AVSampleFormat
+// 将SDL_AudioFormat转换为FFmpeg::AVSampleFormat
 AVSampleFormat Resampler::toAVSampleFormat(SDL_AudioFormat format)
 {
     switch (format) {
@@ -23,17 +23,23 @@ AVSampleFormat Resampler::toAVSampleFormat(SDL_AudioFormat format)
 }
 
 // 根据 解码器decoder SDL音频数据格式说明符SDL_AudioSpec 进行配置
-void Resampler::configure(const AVCodecContext *decoder, const SDL_AudioSpec& outputSpec)
+void Resampler::configure(const AVCodecContext *decoder, const SDL_AudioSpec& outputSpec,
+                          AVRational timeBase)
 {
     if (!decoder) {
-        throw std::invalid_argument("resampler: decoder context is null");
+        throw std::invalid_argument("Resampler: decoder context is null");
+    }
+
+    // 时间戳基准
+    if (timeBase.num > 0 && timeBase.den > 0) {
+        m_timeBase = timeBase;
     }
 
     // 重采样器输出格式
     m_outFormat = toAVSampleFormat(outputSpec.format);
     if (m_outFormat == AV_SAMPLE_FMT_NONE) {
         logging::FAILED_LOG("Resampler::configure", "unsupported output sample format");
-        throw std::runtime_error("resampler: unsupported output sample format");
+        throw std::runtime_error("Resampler: unsupported output sample format");
     }
 
     // 输出采样率
@@ -115,9 +121,17 @@ bool Resampler::convert(const AVFrame *frame, PcmChunk& out)
     if (actualSize < 0) return false;
 
     // PCM数据实际大小
-    // 最佳时间戳
     out.data.resize(static_cast<size_t>(actualSize));
-    out.pts = frame->best_effort_timestamp;
+
+    // 时间戳换算到微秒
+    const int64_t timestamp = frame->best_effort_timestamp != AV_NOPTS_VALUE
+                            ? frame->best_effort_timestamp
+                            : frame->pts;
+    if (timestamp != AV_NOPTS_VALUE && m_timeBase.num > 0 && m_timeBase.den > 0) {
+        out.ptsUs = av_rescale_q(timestamp, m_timeBase, AV_TIME_BASE_Q);
+    } else {
+        out.ptsUs = 0;
+    }
     return true;
 }
 
@@ -156,6 +170,7 @@ bool Resampler::flush(PcmChunk& out)
     if (actualSize < 0) return false;
 
     out.data.resize(static_cast<size_t>(actualSize));
+    out.ptsUs = 0;
     return true;
 }
 

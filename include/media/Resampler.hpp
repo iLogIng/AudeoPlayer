@@ -13,7 +13,7 @@ namespace avplayer
 struct PcmChunk
 {
     std::vector<uint8_t> data;
-    int64_t pts = 0; // 播放帧时间戳，单位由调用方解释（当前来自解码帧的 best_effort_timestamp）
+    int64_t ptsUs = 0; // 播放帧时间戳（微秒）
 }; // struct PcmChunk
 
 // 音频重采样器 将解码帧转换成输出设备需要的格式
@@ -26,7 +26,8 @@ public:
     Resampler(const Resampler&)            = delete;
     Resampler& operator=(const Resampler&) = delete;
 
-    void configure(const AVCodecContext *decoder, const SDL_AudioSpec& outputSpec);
+    void configure(const AVCodecContext *decoder, const SDL_AudioSpec& outputSpec,
+                   AVRational timeBase);
     bool convert(const AVFrame *frame, PcmChunk& out);
     // 排空 swr 内部残留的样本
     bool flush(PcmChunk& out);
@@ -44,6 +45,7 @@ private:
     int m_outSampleRate           = 0;
     int m_outChannels             = 0;
     int m_inSampleRate            = 0;
+    AVRational m_timeBase         = {1, AV_TIME_BASE};
 
 }; // class Resampler
 

@@ -45,6 +45,7 @@ void AudioPlayer::start()
         throw;
     }
 
+    // 解封装线程
     m_demuxThread = std::jthread([this](std::stop_token st) {
         try {
             demuxLoop(st);
@@ -53,6 +54,7 @@ void AudioPlayer::start()
         }
     });
 
+    // 解码线程
     m_decodeThread = std::jthread([this](std::stop_token st) {
         try {
             decodeLoop(st);
