@@ -1,4 +1,5 @@
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_timer.h>
@@ -28,6 +29,12 @@ Uint32 SDLCALL onDrainTimer(void*, SDL_TimerID, Uint32)
 
 int main(int argc, char* argv[])
 {
+    // 必须在 SDL_Init 和任何线程创建之前阻塞信号
+    if (!avplayer::SignalListener::blockSignals()) {
+        std::cerr << "fatal: can not block signals\n";
+        return -1;
+    }
+
     if (argc < 2 || argc > 3) {
         std::cerr << "Usage: " << argv[0] << " <file path> [--window]\n";
         return -1;
@@ -41,11 +48,8 @@ int main(int argc, char* argv[])
             showWindow = true;
     }
 
-    // 必须在 SDL_Init 和任何线程创建之前阻塞信号
-    if (!avplayer::SignalListener::blockSignals()) {
-        std::cerr << "fatal: can not block signals\n";
-        return -1;
-    }
+    // 使用 signalfd 监听信号 禁止 SDL 安装自己的信号处理器
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 
     try {
         // 音频优先 默认不创建窗口

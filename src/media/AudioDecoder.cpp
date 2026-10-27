@@ -14,6 +14,9 @@ void AudioDecoder::open(const AVStream *stream)
         throw std::invalid_argument("audio decoder: stream is null");
     }
 
+    // 重置编解码器状态
+    m_codectx.reset();
+
     // 编解码器 选择解码器
     const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
     if (!codec) {

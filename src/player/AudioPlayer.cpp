@@ -72,6 +72,7 @@ void AudioPlayer::stop()
     m_demuxThread.request_stop();
     m_decodeThread.request_stop();
     m_packetQueue.abort();
+    m_output.abort();
 
     if (m_demuxThread.joinable()) m_demuxThread.join();
     if (m_decodeThread.joinable()) m_decodeThread.join();
@@ -189,6 +190,9 @@ void AudioPlayer::decodeLoop(std::stop_token st)
     if (!frame)
         throw std::bad_alloc();
 
+    // 复用的 PCM 数据块
+    PcmChunk chunk;
+
     // 取出解码器当前可用的所有帧，转换后送入输出
     auto drainFrames = [&]() -> bool {
         while (!st.stop_requested()) {
@@ -202,7 +206,6 @@ void AudioPlayer::decodeLoop(std::stop_token st)
             }
 
             // 使用重采样转换数据帧
-            PcmChunk chunk;
             const bool converted = m_resampler.convert(frame.get(), chunk);
             av_frame_unref(frame.get());
             if (converted && !chunk.data.empty()) {
@@ -221,19 +224,19 @@ void AudioPlayer::decodeLoop(std::stop_token st)
             logging::FAILED_LOG("AudioPlayer::decodeLoop", "can not flush decoder");
             throw std::runtime_error("audio player: can not flush decoder");
         }
+        // 提取并转换可用帧
         if (!drainFrames()) return false;
 
-        PcmChunk chunk;
         while (m_resampler.flush(chunk)) {
             if (!m_output.push(chunk.data.data(), chunk.data.size(), chunk.ptsUs, st))
                 return false;
-            chunk = PcmChunk{};
         }
         return true;
     };
 
+    // 数据包
+    ffmpeg::PacketPtr packet;
     while (!st.stop_requested()) {
-        ffmpeg::PacketPtr packet;
         const QueueStatus status = m_packetQueue.pop(packet, st);
 
         if (status == QueueStatus::Stopped)
@@ -241,7 +244,10 @@ void AudioPlayer::decodeLoop(std::stop_token st)
 
         // 文件结尾 刷新解码器与重采样器缓冲
         if (status == QueueStatus::Eof) {
+            // 将缓存中的数据完全输出
             if (flushAll()) {
+                // 标记文件完全解码
+                m_output.markEndOfStream();
                 // 处理短于预缓冲的文件
                 m_output.resume();
                 m_decodeDone.store(true);
@@ -250,11 +256,12 @@ void AudioPlayer::decodeLoop(std::stop_token st)
             return;
         }
 
-        // 重试次数 < 4
-        int retry = 0;
         // 发送待解码数据包
         int ret = m_decoder.send(packet.get());
+        // 重试次数 < 4
+        int retry = 0;
         while (ret == AVERROR(EAGAIN) && retry++ < 4) {
+            // 提取并解码可用帧
             if (!drainFrames()) return;
             ret = m_decoder.send(packet.get());
         }
@@ -282,6 +289,7 @@ void AudioPlayer::onWorkerExit(std::exception_ptr error)
 
     m_decodeDone.store(true);
     m_packetQueue.abort();
+    m_output.abort();
     // 此处仅请求停止，不能在 worker 内 join 自己
     m_demuxThread.request_stop();
     m_decodeThread.request_stop();
