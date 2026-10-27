@@ -17,15 +17,14 @@ public:
     AudioClock(const AudioClock&)            = delete;
     AudioClock& operator=(const AudioClock&) = delete;
 
-    void reset(int sampleRate);
+    // 仅在没有并发音频回调时调用
+    void reset(int sampleRate, int64_t basePtsUs = 0);
 
     void setBasePtsUs(int64_t ptsUs);
-    // 音频回调已送入 SDL 的帧数
-    void onFramesConsumed(int64_t frames);
-    // SDL 内部尚未播放的数据时长
-    void setBufferedUs(int64_t bufferedUs);
-    // 设备硬件缓冲延迟
     void setDeviceLatencyUs(int64_t latencyUs);
+
+    // 音频回调 更新已消费帧数并发布新的锚点
+    void advance(int64_t frames, int64_t bufferedUs);
 
     void pause();
     void resume();
@@ -35,12 +34,25 @@ public:
     bool valid() const;
 
 private:
-    std::atomic<int64_t> m_sampleRate{0};       // 采样率
-    std::atomic<int64_t> m_basePtsUs{0};        // 基准播放时间戳
-    std::atomic<int64_t> m_consumedFrames{0};   // 已消费帧数
-    std::atomic<int64_t> m_bufferedUs{0};       // 缓冲的时长
-    std::atomic<int64_t> m_deviceLatencyUs{0};  // 设备缓冲延迟
-    std::atomic<bool>    m_paused{false};       // 播放停止
+    static int64_t nowNs();
+    void publish(int64_t positionUs, int64_t timeNs);
+
+    std::atomic<int64_t> m_sampleRate{0};
+    std::atomic<int64_t> m_deviceLatencyUs{0};
+
+    // 暂停状态只由控制线程写，音频回调不直接修改
+    std::atomic<bool>    m_paused{true};
+    std::atomic<int64_t> m_pauseStartNs{0};
+    std::atomic<int64_t> m_pauseAccumNs{0};
+
+    // seqlock 快照
+    std::atomic<uint32_t> m_seq{0};
+    std::atomic<int64_t>  m_anchorPositionUs{0};    // 位置锚点
+    std::atomic<int64_t>  m_anchorTimeNs{0};        // 时间锚点
+
+    // 仅由 reset() 或音频回调写
+    int64_t m_basePtsUs = 0;
+    int64_t m_consumedFrames = 0;
 
 }; // class AudioClock
 
