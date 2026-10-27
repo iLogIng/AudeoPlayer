@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <new>
 
 #include "ffmpeg_compat.hpp"
 
@@ -51,8 +52,17 @@ using FormatContextPtr = std::unique_ptr<AVFormatContext, FormatContextDeleter>;
 using CodecContextPtr  = std::unique_ptr<AVCodecContext, CodecContextDeleter>;
 using SwrContextPtr    = std::unique_ptr<SwrContext, SwrContextDeleter>;
 
-inline PacketPtr makePacket() { return PacketPtr(av_packet_alloc()); }
-inline FramePtr  makeFrame() { return FramePtr(av_frame_alloc()); }
+inline PacketPtr makePacket() {
+    AVPacket *pkt = av_packet_alloc();
+    if (!pkt) throw std::bad_alloc();
+    return PacketPtr(pkt);
+}
+
+inline FramePtr makeFrame() {
+    AVFrame *frame = av_frame_alloc();
+    if (!frame) throw std::bad_alloc();
+    return FramePtr(frame);
+}
 
 } // namespace ffmpeg
 } // namespace avplayer
