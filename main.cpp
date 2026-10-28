@@ -67,9 +67,13 @@ int main(int argc, char* argv[])
             window = std::make_unique<avplayer::Window>(avplayer::WindowConfig{});
         }
 
+        // 设置播放器事件回调
         player.setEventCallback(
             [](avplayer::PlayerEvent event) {
                 switch (event) {
+                case avplayer::PlayerEvent::ClockStarted:
+                    avplayer::AppEvent::push(avplayer::AppEventCode::ClockStarted);
+                    break;
                 case avplayer::PlayerEvent::PlaybackFinished:
                     avplayer::AppEvent::push(avplayer::AppEventCode::PlaybackFinished);
                     break;
@@ -93,6 +97,7 @@ int main(int argc, char* argv[])
             if (window && !window->processEvent(event))
                 running = false;
 
+            // SDL 事件
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
             } else if (event.type == SDL_EVENT_KEY_DOWN
@@ -100,12 +105,17 @@ int main(int argc, char* argv[])
                 running = false;
             }
 
+            // 软件事件
             if (avplayer::AppEvent::isAppEvent(event)) {
                 switch (avplayer::AppEvent::code(event)) {
                 case avplayer::AppEventCode::Quit:
                 case avplayer::AppEventCode::PlayerError:
                 case avplayer::AppEventCode::PlaybackFinished:
                     running = false;
+                    break;
+
+                case avplayer::AppEventCode::ClockStarted:
+                    presenter.onClockStarted();
                     break;
 
                 case avplayer::AppEventCode::VideoFrameReady:
