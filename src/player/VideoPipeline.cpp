@@ -4,18 +4,23 @@
 #include <stdexcept>
 
 #include "Log.hpp"
+#include "media/MediaTimeline.hpp"
 
 namespace avplayer
 {
 
 void VideoPipeline::open(const AVStream *stream,
                          AVRational timeBase,
+                         const MediaTimeline *timeline,
                          SDL_Renderer *renderer,
                          FrameReadyCallback onFrameReady)
 {
     if (!stream || !renderer) {
         throw std::invalid_argument("video pipeline: invalid stream or renderer");
     }
+
+    m_stream = stream;
+    m_timeline = timeline;
 
     m_timeBase = (timeBase.num > 0 && timeBase.den > 0)
         ? timeBase
@@ -52,6 +57,8 @@ void VideoPipeline::close()
     m_frames.flush();
     m_frame.reset();
     m_decoder.close();
+    m_stream = nullptr;
+    m_timeline = nullptr;
     m_decodeDone.store(false);
 }
 
@@ -118,6 +125,8 @@ bool VideoPipeline::drainFrames(std::stop_token st)
         int64_t ptsUs = 0;
         if (timestamp != AV_NOPTS_VALUE) {
             ptsUs = av_rescale_q(timestamp, m_timeBase, AV_TIME_BASE_Q);
+            if (m_timeline && m_stream)
+                ptsUs = m_timeline->normalize(m_stream, ptsUs);
         } else if (m_hasPts) {
             ptsUs = m_lastPtsUs + m_frameDurationUs;
         }
@@ -133,6 +142,7 @@ bool VideoPipeline::drainFrames(std::stop_token st)
             throw std::runtime_error("video pipeline: can not convert frame");
         }
 
+        // YUV420P
         const size_t bytes = static_cast<size_t>(converted->width)
                            * static_cast<size_t>(converted->height)
                            * 3 / 2;
@@ -187,6 +197,17 @@ bool VideoPipeline::presentNextFrame()
         return false;
 
     return m_output->present(frame.frame.get());
+}
+
+bool VideoPipeline::dropNextFrame()
+{
+    VideoFrame frame;
+    return m_frames.tryPop(frame);
+}
+
+int64_t VideoPipeline::frameDurationUs() const
+{
+    return m_frameDurationUs;
 }
 
 bool VideoPipeline::decodeDone() const

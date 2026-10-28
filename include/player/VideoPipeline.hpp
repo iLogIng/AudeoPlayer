@@ -17,6 +17,8 @@
 namespace avplayer
 {
 
+class MediaTimeline;
+
 // 视频处理流水线
 // 解码线程负责解码与 YUV420P 转换 主线程负责纹理上传与渲染
 class VideoPipeline
@@ -32,6 +34,7 @@ public:
 
     void open(const AVStream *stream,
               AVRational timeBase,
+              const MediaTimeline *timeline,
               SDL_Renderer *renderer,
               FrameReadyCallback onFrameReady);
     void close();
@@ -44,6 +47,8 @@ public:
     bool hasFrame() const;
     bool nextPtsUs(int64_t& ptsUs) const;
     bool presentNextFrame(); // 主线程
+    bool dropNextFrame();    // 主线程 丢弃过期帧
+    int64_t frameDurationUs() const;
     bool decodeDone() const;
 
 private:
@@ -56,6 +61,8 @@ private:
     std::unique_ptr<VideoOutput> m_output;
     FrameReadyCallback m_onFrameReady;
     ffmpeg::FramePtr m_frame;
+    const AVStream *m_stream = nullptr;
+    const MediaTimeline *m_timeline = nullptr;
 
     AVRational m_timeBase{0, 1};
     int64_t m_lastPtsUs = 0;
