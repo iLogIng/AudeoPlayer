@@ -52,6 +52,38 @@ int Demuxer::readPacket(AVPacket *pkt)
     return av_read_frame(m_fmtctx.get(), pkt);
 }
 
+// seek 到目标时间点 单位微秒
+// targetUs 使用归一化后的时间线 需要加上主时钟对应流的起始时间
+int Demuxer::seekTo(int64_t targetUs)
+{
+    if (!m_fmtctx)
+        return AVERROR_EOF;
+
+    const AVStream *reference = audioStream();
+    if (!reference)
+        reference = videoStream();
+
+    int64_t baseUs = 0;
+    if (reference && reference->start_time != AV_NOPTS_VALUE) {
+        baseUs = av_rescale_q(
+            reference->start_time, reference->time_base, AV_TIME_BASE_Q);
+    } else if (m_fmtctx->start_time != AV_NOPTS_VALUE) {
+        baseUs = m_fmtctx->start_time;
+    }
+
+    return avformat_seek_file(
+        m_fmtctx.get(), -1,
+        INT64_MIN, targetUs + baseUs, INT64_MAX, 0);
+}
+
+// 媒体总时长 单位微秒
+int64_t Demuxer::durationUs() const
+{
+    if (!m_fmtctx || m_fmtctx->duration == AV_NOPTS_VALUE)
+        return 0;
+    return m_fmtctx->duration;
+}
+
 // 关闭上下文
 void Demuxer::close()
 {

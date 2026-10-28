@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 
 #include "FFmpegRAII.hpp"
@@ -20,6 +21,9 @@ public:
     void open(const std::filesystem::path& path);
     // 返回 <0 表示结束或错误
     int readPacket(AVPacket *pkt);
+    // 以微秒为单位 seek
+    int seekTo(int64_t targetUs);
+    int64_t durationUs() const;
     void close();
 
     // 音频流
