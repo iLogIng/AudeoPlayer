@@ -16,6 +16,7 @@
 #include "player/VideoPipeline.hpp"
 #include "sync/AudioClock.hpp"
 #include "sync/MasterClock.hpp"
+#include "sync/SystemClock.hpp"
 
 namespace avplayer
 {
@@ -44,6 +45,15 @@ public:
     // 必须在 start() 之前调用
     void setEventCallback(EventCallback callback);
 
+    void setVolume(float volume);
+    int64_t durationUs() const;
+    bool seekTo(int64_t targetUs);
+
+    // 用于区分不同播放/seek 会话的事件
+    void setSessionId(uint64_t sessionId) { m_sessionId.store(sessionId); }
+    uint64_t sessionId() const { return m_sessionId.load(); }
+
+    bool hasAudio() const;
     bool hasVideo() const;
     bool videoEnabled() const;
     bool hasPendingVideoFrame() const;
@@ -80,7 +90,14 @@ private:
     std::jthread m_videoThread;
 
     bool m_opened = false;
+    bool m_audioEnabled = false;
     bool m_videoEnabled = false;
+    bool m_paused = false;
+    float m_volume = 1.0f;
+    int64_t m_pendingSeekUs = -1;
+    std::atomic<uint64_t> m_sessionId{0};
+    Window *m_window = nullptr;
+    SystemClock m_systemClock;
     std::atomic<bool> m_started{false};
 
     std::atomic<bool> m_audioEof{false};

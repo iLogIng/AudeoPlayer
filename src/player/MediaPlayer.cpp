@@ -1,5 +1,6 @@
 #include "player/MediaPlayer.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <stdexcept>
@@ -31,8 +32,8 @@ void MediaPlayer::open()
     m_demuxer.open(m_path);
     m_timeline.configure(m_demuxer.formatContext());
 
-    if (!m_demuxer.audioStream()) {
-        throw std::runtime_error("media player: audio stream is required");
+    if (!m_demuxer.audioStream() && !m_demuxer.videoStream()) {
+        throw std::runtime_error("media player: no audio or video stream");
     }
 
     m_opened = true;
@@ -46,24 +47,37 @@ void MediaPlayer::start(Window *window)
     if (m_started.exchange(true)) return;
 
     try {
+        m_window = window;
+
+        const bool hasAudioStream = hasAudio();
         const bool hasVideoStream = hasVideo();
 
         if (hasVideoStream && window && !window->renderer()) {
             throw std::runtime_error("media player: video window has no renderer");
         }
 
+        m_audioEnabled = hasAudioStream;
         m_videoEnabled = hasVideoStream && window != nullptr;
 
+        if (!m_audioEnabled && !m_videoEnabled) {
+            throw std::runtime_error("media player: no playable stream");
+        }
+
         m_audioEof.store(false);
-        m_audioDrained.store(false);
+        m_audioDrained.store(!m_audioEnabled);
         m_videoEof.store(false);
         m_videoDrained.store(!m_videoEnabled);
         m_finished.store(false);
 
-        m_audio.open(m_demuxer.audioStream(), m_demuxer.audioTimeBase(), &m_timeline);
-        m_audio.setStartedCallback([this] {
-            notifyEvent(PlayerEvent::ClockStarted);
-        });
+        if (m_audioEnabled) {
+            m_audio.open(m_demuxer.audioStream(), m_demuxer.audioTimeBase(), &m_timeline);
+            if (m_pendingSeekUs >= 0)
+                m_audio.setSeekTargetUs(m_pendingSeekUs);
+            m_audio.setVolume(m_volume);
+            m_audio.setStartedCallback([this] {
+                notifyEvent(PlayerEvent::ClockStarted);
+            });
+        }
 
         if (m_videoEnabled) {
             m_video.open(
@@ -71,14 +85,25 @@ void MediaPlayer::start(Window *window)
                 m_demuxer.videoTimeBase(),
                 &m_timeline,
                 window->renderer(),
-                [] { AppEvent::push(AppEventCode::VideoFrameReady); });
+                [this] {
+                    AppEvent::push(AppEventCode::VideoFrameReady, m_sessionId.load());
+                });
+            if (m_pendingSeekUs >= 0)
+                m_video.setSeekTargetUs(m_pendingSeekUs);
         } else if (hasVideoStream) {
             logging::INFO_LOG("MediaPlayer::start", "video disabled: no window");
+        }
+
+        if (!m_audioEnabled) {
+            m_systemClock.start(m_pendingSeekUs > 0 ? m_pendingSeekUs : 0);
         }
     } catch (...) {
         m_started.store(false);
         throw;
     }
+
+    m_audioPackets.reset();
+    m_videoPackets.reset();
 
     m_demuxThread = std::jthread([this](std::stop_token st) {
         try {
@@ -88,13 +113,15 @@ void MediaPlayer::start(Window *window)
         }
     });
 
-    m_audioThread = std::jthread([this](std::stop_token st) {
-        try {
-            audioLoop(st);
-        } catch (...) {
-            onWorkerExit(std::current_exception());
-        }
-    });
+    if (m_audioEnabled) {
+        m_audioThread = std::jthread([this](std::stop_token st) {
+            try {
+                audioLoop(st);
+            } catch (...) {
+                onWorkerExit(std::current_exception());
+            }
+        });
+    }
 
     if (m_videoEnabled) {
         m_videoThread = std::jthread([this](std::stop_token st) {
@@ -105,6 +132,16 @@ void MediaPlayer::start(Window *window)
             }
         });
     }
+
+    if (!m_audioEnabled && m_videoEnabled) {
+        notifyEvent(PlayerEvent::ClockStarted);
+    }
+
+    // seek 后保持原来的暂停状态
+    if (m_paused)
+        pause(true);
+
+    m_pendingSeekUs = -1;
 }
 
 void MediaPlayer::stop()
@@ -132,13 +169,71 @@ void MediaPlayer::stop()
 
 void MediaPlayer::pause(bool paused)
 {
-    m_audio.pause(paused);
+    m_paused = paused;
+
+    if (m_audioEnabled) {
+        m_audio.pause(paused);
+        return;
+    }
+
+    if (m_videoEnabled) {
+        if (paused) {
+            m_systemClock.pause();
+        } else {
+            m_systemClock.resume();
+            notifyEvent(PlayerEvent::ClockStarted);
+        }
+    }
+}
+
+void MediaPlayer::setVolume(float volume)
+{
+    m_volume = std::clamp(volume, 0.0f, 1.0f);
+
+    if (m_audioEnabled)
+        m_audio.setVolume(m_volume);
+}
+
+int64_t MediaPlayer::durationUs() const
+{
+    return m_demuxer.durationUs();
+}
+
+bool MediaPlayer::seekTo(int64_t targetUs)
+{
+    if (!m_opened || !m_started)
+        return false;
+
+    const int64_t duration = durationUs();
+    if (duration > 0)
+        targetUs = std::clamp<int64_t>(targetUs, 0, duration);
+    else if (targetUs < 0)
+        targetUs = 0;
+
+    Window *window = m_window;
+
+    stop();
+    open();
+
+    if (m_demuxer.seekTo(targetUs) < 0)
+        throw std::runtime_error("media player: seek failed");
+
+    // start() 会丢弃目标之前的音视频帧 并保持暂停状态与音量
+    m_pendingSeekUs = targetUs;
+    start(window);
+
+    return true;
 }
 
 void MediaPlayer::setEventCallback(EventCallback callback)
 {
     std::lock_guard lock(m_callbackMutex);
     m_eventCallback = std::move(callback);
+}
+
+bool MediaPlayer::hasAudio() const
+{
+    return m_demuxer.audioStreamIndex() >= 0;
 }
 
 bool MediaPlayer::hasVideo() const
@@ -207,7 +302,9 @@ bool MediaPlayer::finished() const
 
 const MasterClock& MediaPlayer::masterClock() const
 {
-    return m_audio.clock();
+    if (m_audioEnabled)
+        return m_audio.clock();
+    return m_systemClock;
 }
 
 const AudioClock& MediaPlayer::audioClock() const
@@ -245,9 +342,13 @@ void MediaPlayer::demuxLoop(std::stop_token st)
 
         // 获得音视频流索引
         if (packet->stream_index == m_demuxer.audioStreamIndex()) {
-            if (m_audioPackets.push(std::move(packet), st) != QueueStatus::Ok)
-                return;
-            packet = ffmpeg::makePacket();
+            if (m_audioEnabled) {
+                if (m_audioPackets.push(std::move(packet), st) != QueueStatus::Ok)
+                    return;
+                packet = ffmpeg::makePacket();
+            } else {
+                av_packet_unref(packet.get());
+            }
         } else if (packet->stream_index == m_demuxer.videoStreamIndex()) {
             if (m_videoEnabled) {
                 if (m_videoPackets.push(std::move(packet), st) != QueueStatus::Ok)
