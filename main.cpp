@@ -25,16 +25,16 @@ int main(int argc, char* argv[])
     }
 
     if (argc < 2 || argc > 3) {
-        std::cerr << "Usage: " << argv[0] << " <file path> [--window]\n";
+        std::cerr << "Usage: " << argv[0] << " <file path> [--no-window]\n";
         return -1;
     }
 
     const std::filesystem::path filepath(argv[1]);
 
-    bool showWindow = false;
+    bool noWindow = false;
     for (int i = 2; i < argc; ++i) {
-        if (std::string(argv[i]) == "--window")
-            showWindow = true;
+        if (std::string(argv[i]) == "--no-window")
+            noWindow = true;
     }
 
     // 使用 signalfd 监听信号 禁止 SDL 安装自己的信号处理器
@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
         avplayer::MediaPlayer player(filepath);
         player.open();
 
-        if (player.hasVideo() || showWindow) {
+        if (player.hasVideo() && !noWindow) {
             sdl.initSubSystem(SDL_INIT_VIDEO);
             window = std::make_unique<avplayer::Window>(avplayer::WindowConfig{});
         }

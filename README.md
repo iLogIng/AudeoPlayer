@@ -5,7 +5,13 @@
 项目依赖:
 - FFmpeg
 - SDL3
-> 可能添加 spdlog 日志
+
+## 运行
+
+```bash
+./AudeoPlayer <file>                # 默认播放；视频文件自动创建窗口
+./AudeoPlayer <file> --no-window    # 不创建窗口，只播放音频
+```
 
 ## TODO
 

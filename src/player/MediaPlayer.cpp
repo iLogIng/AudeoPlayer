@@ -46,10 +46,18 @@ void MediaPlayer::start(Window *window)
     if (m_started.exchange(true)) return;
 
     try {
+        const bool hasVideoStream = hasVideo();
+
+        if (hasVideoStream && window && !window->renderer()) {
+            throw std::runtime_error("media player: video window has no renderer");
+        }
+
+        m_videoEnabled = hasVideoStream && window != nullptr;
+
         m_audioEof.store(false);
         m_audioDrained.store(false);
         m_videoEof.store(false);
-        m_videoDrained.store(!hasVideo());
+        m_videoDrained.store(!m_videoEnabled);
         m_finished.store(false);
 
         m_audio.open(m_demuxer.audioStream(), m_demuxer.audioTimeBase(), &m_timeline);
@@ -57,17 +65,15 @@ void MediaPlayer::start(Window *window)
             notifyEvent(PlayerEvent::ClockStarted);
         });
 
-        if (hasVideo()) {
-            if (!window || !window->renderer()) {
-                throw std::runtime_error("media player: video output requires a window");
-            }
-
+        if (m_videoEnabled) {
             m_video.open(
                 m_demuxer.videoStream(),
                 m_demuxer.videoTimeBase(),
                 &m_timeline,
                 window->renderer(),
                 [] { AppEvent::push(AppEventCode::VideoFrameReady); });
+        } else if (hasVideoStream) {
+            logging::INFO_LOG("MediaPlayer::start", "video disabled: no window");
         }
     } catch (...) {
         m_started.store(false);
@@ -90,7 +96,7 @@ void MediaPlayer::start(Window *window)
         }
     });
 
-    if (hasVideo()) {
+    if (m_videoEnabled) {
         m_videoThread = std::jthread([this](std::stop_token st) {
             try {
                 videoLoop(st);
@@ -140,18 +146,26 @@ bool MediaPlayer::hasVideo() const
     return m_demuxer.videoStreamIndex() >= 0;
 }
 
+bool MediaPlayer::videoEnabled() const
+{
+    return m_videoEnabled;
+}
+
 bool MediaPlayer::hasPendingVideoFrame() const
 {
-    return m_video.hasFrame();
+    return m_videoEnabled && m_video.hasFrame();
 }
 
 bool MediaPlayer::nextVideoPtsUs(int64_t& ptsUs) const
 {
-    return m_video.nextPtsUs(ptsUs);
+    return m_videoEnabled && m_video.nextPtsUs(ptsUs);
 }
 
 bool MediaPlayer::presentNextVideoFrame()
 {
+    if (!m_videoEnabled)
+        return false;
+
     const bool presented = m_video.presentNextFrame();
     updateVideoDrained();
     return presented;
@@ -159,6 +173,9 @@ bool MediaPlayer::presentNextVideoFrame()
 
 bool MediaPlayer::dropNextVideoFrame()
 {
+    if (!m_videoEnabled)
+        return false;
+
     const bool dropped = m_video.dropNextFrame();
     updateVideoDrained();
     return dropped;
@@ -172,6 +189,11 @@ int64_t MediaPlayer::videoFrameDurationUs() const
 // 更新视频帧耗尽
 void MediaPlayer::updateVideoDrained()
 {
+    if (!m_videoEnabled) {
+        m_videoDrained.store(true);
+        return;
+    }
+
     if (m_videoEof.load() && !m_video.hasFrame()) {
         m_videoDrained.store(true);
         checkFinished();
@@ -227,9 +249,13 @@ void MediaPlayer::demuxLoop(std::stop_token st)
                 return;
             packet = ffmpeg::makePacket();
         } else if (packet->stream_index == m_demuxer.videoStreamIndex()) {
-            if (m_videoPackets.push(std::move(packet), st) != QueueStatus::Ok)
-                return;
-            packet = ffmpeg::makePacket();
+            if (m_videoEnabled) {
+                if (m_videoPackets.push(std::move(packet), st) != QueueStatus::Ok)
+                    return;
+                packet = ffmpeg::makePacket();
+            } else {
+                av_packet_unref(packet.get());
+            }
         } else {
             av_packet_unref(packet.get());
         }

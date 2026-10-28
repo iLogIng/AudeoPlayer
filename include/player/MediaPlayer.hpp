@@ -45,6 +45,7 @@ public:
     void setEventCallback(EventCallback callback);
 
     bool hasVideo() const;
+    bool videoEnabled() const;
     bool hasPendingVideoFrame() const;
     bool nextVideoPtsUs(int64_t& ptsUs) const;
     bool presentNextVideoFrame();   // 主线程
@@ -79,6 +80,7 @@ private:
     std::jthread m_videoThread;
 
     bool m_opened = false;
+    bool m_videoEnabled = false;
     std::atomic<bool> m_started{false};
 
     std::atomic<bool> m_audioEof{false};
