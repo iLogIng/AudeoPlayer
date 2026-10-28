@@ -1,4 +1,6 @@
 #include <SDL3/SDL_hints.h>
+#include <algorithm>
+#include <cctype>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -36,9 +38,24 @@ int main(int argc, char* argv[])
         } else {
             if (fs::is_directory(arg)) {
                 fs::path dir(arg);
-                for (const auto& entry : fs::directory_iterator(dir)) {
-                    if (entry.is_regular_file())
-                        playlist.emplace_back(entry.path());
+                try {
+                    for (const auto& entry : fs::directory_iterator(dir)) {
+                        if (entry.is_regular_file()) {
+                            std::string ext = entry.path().extension();
+                            std::transform(ext.begin(), ext.end(), ext.begin(),
+                                    [](unsigned char c) { return std::tolower(c); });
+                            if (ext == ".mp3" ||
+                                ext == ".mp4" ||
+                                ext == ".flac" ||
+                                ext == ".wav")
+                            {
+                                playlist.emplace_back(entry.path());
+                            }
+                        }
+                    }
+                }
+                catch (const fs::filesystem_error& e) {
+                    std::cerr << "failed: directory traveling, " << e.what() << "\n";
                 }
             }
             else {
