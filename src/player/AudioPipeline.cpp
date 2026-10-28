@@ -1,14 +1,20 @@
 #include "player/AudioPipeline.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 #include "Log.hpp"
+#include "media/MediaTimeline.hpp"
 
 namespace avplayer
 {
 
-void AudioPipeline::open(const AVStream *stream, AVRational timeBase)
+void AudioPipeline::open(const AVStream *stream, AVRational timeBase,
+                         const MediaTimeline *timeline)
 {
+    m_stream = stream;
+    m_timeline = timeline;
+
     m_decoder.open(stream);
     m_output.open();
     m_resampler.configure(m_decoder.context(), m_output.spec(), timeBase);
@@ -21,7 +27,14 @@ void AudioPipeline::close()
     m_output.close();
     m_decoder.close();
     m_frame.reset();
+    m_stream = nullptr;
+    m_timeline = nullptr;
     m_decodeDone.store(false);
+}
+
+void AudioPipeline::setStartedCallback(StartedCallback callback)
+{
+    m_output.setStartedCallback(std::move(callback));
 }
 
 // 处理并推送音频流
@@ -87,7 +100,7 @@ bool AudioPipeline::drainFrames(std::stop_token st)
         const bool converted = m_resampler.convert(m_frame.get(), m_chunk);
         av_frame_unref(m_frame.get());
         if (converted && !m_chunk.data.empty()) {
-            if (!m_output.push(m_chunk.data.data(), m_chunk.data.size(), m_chunk.ptsUs, st))
+            if (!pushChunk(st))
                 return false;
         }
     }
@@ -107,11 +120,20 @@ bool AudioPipeline::flushAll(std::stop_token st)
         return false;
 
     while (m_resampler.flush(m_chunk)) {
-        if (!m_output.push(m_chunk.data.data(), m_chunk.data.size(), m_chunk.ptsUs, st))
+        if (!pushChunk(st))
             return false;
     }
 
     return true;
+}
+
+bool AudioPipeline::pushChunk(std::stop_token st)
+{
+    int64_t ptsUs = m_chunk.ptsUs;
+    if (m_timeline && m_stream)
+        ptsUs = m_timeline->normalize(m_stream, ptsUs);
+
+    return m_output.push(m_chunk.data.data(), m_chunk.data.size(), ptsUs, st);
 }
 
 void AudioPipeline::abort()

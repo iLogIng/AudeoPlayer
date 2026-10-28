@@ -149,6 +149,7 @@ bool AudioOutput::push(const uint8_t *pcmData, size_t bytes, int64_t ptsUs,
         m_basePtsSet = true;
     }
 
+    // 写入环形缓冲
     if (!m_ring->write(pcmData, bytes, st)) return false;
 
     // 达到预缓冲后自动开始播放
