@@ -27,6 +27,9 @@ find_package(Threads REQUIRED)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# 基础组件测试 使用 ctest 运行
+include(CTest)
+
 add_library(avplayer_core STATIC
     src/app/PlaybackController.cpp
     src/core/AppEvent.cpp
@@ -78,3 +81,7 @@ add_executable(AudeoPlayer
 target_link_libraries(AudeoPlayer PRIVATE
     avplayer_core
 )
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

@@ -45,6 +45,19 @@
 - 没有播放窗口时（`--no-window` 或纯音频文件）使用终端按键控制。
 - 终端不是 TTY 时无法读取按键，但仍会按播放列表自动连播。
 
+## 测试
+
+基础组件测试位于 `tests/`，使用 CTest 运行：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
+```
+
+覆盖 PCM 环形缓冲、数据包队列、视频帧队列、音频/系统时钟、媒体时间线和应用事件，
+不需要音频/视频设备或媒体素材。配置时传入 `-DBUILD_TESTING=OFF` 可关闭测试构建。
+
 ## TODO
 
 - 目前使用 `SDL_Log` 作为日志输出
