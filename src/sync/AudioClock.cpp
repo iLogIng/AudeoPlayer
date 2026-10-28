@@ -16,12 +16,15 @@ int64_t AudioClock::nowNs()
 void AudioClock::publish(int64_t positionUs, int64_t timeNs)
 {
     const uint32_t seq = m_seq.load(std::memory_order_relaxed);
+    const int64_t pauseAccumNs = m_pauseAccumNs.load(std::memory_order_relaxed);
 
     m_seq.store(seq + 1, std::memory_order_release); // odd: 写入中
     // 更新锚点位置
     m_anchorPositionUs.store(positionUs, std::memory_order_relaxed);
     // 更新锚点时间
     m_anchorTimeNs.store(timeNs, std::memory_order_relaxed);
+    // 记录发布锚点时的暂停累计 之后只需扣除新增的暂停时间
+    m_anchorPauseAccumNs.store(pauseAccumNs, std::memory_order_relaxed);
     m_seq.store(seq + 2, std::memory_order_release); // even: 写入完成
 }
 
@@ -104,6 +107,7 @@ int64_t AudioClock::positionUs() const
 {
     int64_t anchorPositionUs = 0;
     int64_t anchorTimeNs = 0;
+    int64_t anchorPauseAccumNs = 0;
     uint32_t seq1 = 0;
     uint32_t seq2 = 0;
 
@@ -115,6 +119,8 @@ int64_t AudioClock::positionUs() const
 
         anchorPositionUs = m_anchorPositionUs.load(std::memory_order_relaxed);
         anchorTimeNs = m_anchorTimeNs.load(std::memory_order_relaxed);
+        anchorPauseAccumNs =
+            m_anchorPauseAccumNs.load(std::memory_order_relaxed);
 
         seq2 = m_seq.load(std::memory_order_acquire);
     } while (seq1 != seq2 || (seq2 & 1u));  // 写入中
@@ -125,7 +131,11 @@ int64_t AudioClock::positionUs() const
         : nowNs();
     const int64_t pauseAccumNs = m_pauseAccumNs.load(std::memory_order_acquire);
 
-    int64_t elapsedNs = effectiveNow - anchorTimeNs - pauseAccumNs;
+    // 锚点发布前的暂停时间已经包含在锚点位置中 不能重复扣除
+    int64_t extraPauseNs = pauseAccumNs - anchorPauseAccumNs;
+    if (extraPauseNs < 0) extraPauseNs = 0;
+
+    int64_t elapsedNs = effectiveNow - anchorTimeNs - extraPauseNs;
     if (elapsedNs < 0) elapsedNs = 0;
 
     return anchorPositionUs + elapsedNs / 1000;

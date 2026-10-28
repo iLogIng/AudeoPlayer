@@ -58,16 +58,20 @@ bool AudioOutput::resumeDevice()
 {
     if (!m_stream || m_closing.load()) return false;
 
+    // 先恢复时钟再启动设备 避免音频回调在时钟暂停时发布新锚点
+    const bool wasPaused = m_clock.paused();
+    m_clock.resume();
+
     // 恢复SDL音频流设备
     if (!SDL_ResumeAudioStreamDevice(m_stream)) {
         logging::ERROR_LOG("AudioOutput::resumeDevice", SDL_GetError());
+        if (wasPaused)
+            m_clock.pause();
         return false;
     }
 
     m_deviceResumed.store(true);
 
-    const bool wasPaused = m_clock.paused();
-    m_clock.resume();
     // 重新开始音频
     if (wasPaused)
         notifyStarted();

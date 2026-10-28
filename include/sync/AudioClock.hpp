@@ -51,6 +51,7 @@ private:
     std::atomic<uint32_t> m_seq{0};
     std::atomic<int64_t>  m_anchorPositionUs{0};    // 位置锚点
     std::atomic<int64_t>  m_anchorTimeNs{0};        // 时间锚点
+    std::atomic<int64_t>  m_anchorPauseAccumNs{0};  // 锚点发布时的暂停累计
 
     // 仅由 reset() 或音频回调写
     int64_t m_basePtsUs = 0;
