@@ -3,12 +3,14 @@
 #include <atomic>
 #include <cstdint>
 
+#include "sync/MasterClock.hpp"
+
 namespace avplayer
 {
 
 // 被动的音频播放时钟
 // 只负责提供音频当前播放位置，不拥有线程/定时器/事件调度
-class AudioClock
+class AudioClock : public MasterClock
 {
 public:
     AudioClock() = default;
@@ -29,9 +31,9 @@ public:
     void pause();
     void resume();
 
-    int64_t positionUs() const;
-    bool paused() const;
-    bool valid() const;
+    int64_t positionUs() const override;
+    bool paused() const override;
+    bool valid() const override;
 
 private:
     static int64_t nowNs();
