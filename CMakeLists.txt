@@ -34,6 +34,7 @@ add_library(avplayer_core STATIC
     src/media/Demuxer.cpp
     src/media/AudioDecoder.cpp
     src/media/Resampler.cpp
+    src/media/MediaTimeline.cpp
     src/media/VideoDecoder.cpp
     src/media/VideoConverter.cpp
     src/media/VideoFrameQueue.cpp
