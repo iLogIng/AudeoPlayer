@@ -1,6 +1,8 @@
 # AudeoPlayer
 
-本项目是基于 ***FFmpeg C api*** 的音视频播放器
+本项目是基于 ***FFmpeg C api*** 的简单音视频播放器
+
+> 当前项目仅能在Linux内核平台上运行
 
 项目依赖:
 - FFmpeg
