@@ -5,6 +5,7 @@ namespace avplayer
 
 enum class PlayerEvent
 {
+    ClockStarted,
     PlaybackFinished,
     Error,
 };

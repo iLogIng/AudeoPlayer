@@ -84,12 +84,16 @@ void AudioClock::pause()
     m_paused.store(true, std::memory_order_release);
 }
 
+// 时钟唤醒
 void AudioClock::resume()
 {
     if (!m_paused.load(std::memory_order_acquire)) return;
 
+    // 当前时间点
     const int64_t now = nowNs();
+    // 开始时间点
     const int64_t start = m_pauseStartNs.load(std::memory_order_acquire);
+    // 累积时间
     const int64_t accumulated = m_pauseAccumNs.load(std::memory_order_acquire);
 
     m_pauseAccumNs.store(accumulated + (now - start), std::memory_order_release);
