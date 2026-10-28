@@ -1,7 +1,6 @@
 #include "player/VideoPresenter.hpp"
 
 #include <algorithm>
-#include <chrono>
 
 #include "Log.hpp"
 #include "core/AppEvent.hpp"
@@ -13,14 +12,11 @@ namespace avplayer
 namespace
 {
 
-// 当前时间点
-int64_t nowNs()
-{
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
+// 同步阈值上下界 后续可在此调整
+constexpr int64_t kMinSyncThresholdUs = 40'000; // 40ms
+constexpr int64_t kMaxSyncThresholdUs = 100'000; // 100ms
+constexpr int kMaxFramesPerCycle = 8;
 
-// 帧计时器
 Uint64 SDLCALL onFrameTimer(void*, SDL_TimerID, Uint64)
 {
     // 队列满时 1ms 后重试
@@ -39,22 +35,35 @@ VideoPresenter::~VideoPresenter()
     cancel();
 }
 
-// 帧就绪
 void VideoPresenter::onFrameReady()
 {
+    if (!m_player.masterClock().valid() || m_player.masterClock().paused())
+        return;
+
     presentDueFrames();
     scheduleNext();
 }
 
-// 帧到期
 void VideoPresenter::onFrameDue()
 {
     m_timer = 0;
+
+    if (!m_player.masterClock().valid() || m_player.masterClock().paused())
+        return;
+
     presentDueFrames();
     scheduleNext();
 }
 
-// 取消播放
+void VideoPresenter::onClockStarted()
+{
+    if (!m_player.masterClock().valid() || m_player.masterClock().paused())
+        return;
+
+    presentDueFrames();
+    scheduleNext();
+}
+
 void VideoPresenter::cancel()
 {
     if (m_timer) {
@@ -63,57 +72,62 @@ void VideoPresenter::cancel()
     }
 }
 
-// 当前PTS时间戳
-int64_t VideoPresenter::videoNowPtsUs() const
-{
-    if (!m_anchored) return 0;
-    return m_anchorPtsUs + (nowNs() - m_anchorTimeNs) / 1000;
-}
-
-// 发送到期帧
 void VideoPresenter::presentDueFrames()
 {
-    int64_t firstPtsUs = 0;
-    if (!m_anchored) {
-        if (!m_player.nextVideoPtsUs(firstPtsUs))
-            return;
+    const int64_t audioPosUs = m_player.masterClock().positionUs();
+    const int64_t syncThresholdUs = std::clamp(
+        m_player.videoFrameDurationUs(),
+        kMinSyncThresholdUs,
+        kMaxSyncThresholdUs);
 
-        m_anchorPtsUs = firstPtsUs;
-        m_anchorTimeNs = nowNs();
-        m_anchored = true;
-    }
-
-    int presented = 0;
-    while (presented < 8) {
+    int processed = 0;
+    while (processed < kMaxFramesPerCycle) {
         int64_t nextPtsUs = 0;
         if (!m_player.nextVideoPtsUs(nextPtsUs))
             break;
-        if (nextPtsUs > videoNowPtsUs())
+
+        // 计算视频与音频位置偏移
+        const int64_t diffUs = nextPtsUs - audioPosUs;
+
+        // 视频落后过多 丢弃该帧
+        if (diffUs < -syncThresholdUs) {
+            m_player.dropNextVideoFrame();
+            ++processed;
+            continue;
+        }
+
+        // 视频超前 等待下一次 FrameDue
+        if (diffUs > syncThresholdUs)
             break;
 
         if (!m_player.presentNextVideoFrame())
             break;
 
-        ++presented;
+        ++processed;
     }
 }
 
-// 管理下一帧
 void VideoPresenter::scheduleNext()
 {
     if (m_timer) return;
+    if (!m_player.masterClock().valid() || m_player.masterClock().paused())
+        return;
 
-    // 获取下一帧时间戳
     int64_t nextPtsUs = 0;
     if (!m_player.nextVideoPtsUs(nextPtsUs))
         return;
 
+    const int64_t audioPosUs = m_player.masterClock().positionUs();
+    const int64_t syncThresholdUs = std::clamp(
+        m_player.videoFrameDurationUs(),
+        kMinSyncThresholdUs,
+        kMaxSyncThresholdUs);
+
     const int64_t delayUs = std::max<int64_t>(
-        nextPtsUs - videoNowPtsUs(), 0);
+        nextPtsUs - audioPosUs - syncThresholdUs, 0);
     const Uint64 intervalNs = std::max<Uint64>(
         static_cast<Uint64>(delayUs) * 1000, 1);
 
-    // SDL计时器
     m_timer = SDL_AddTimerNS(intervalNs, onFrameTimer, nullptr);
     if (!m_timer) {
         logging::ERROR_LOG("VideoPresenter::scheduleNext", SDL_GetError());
