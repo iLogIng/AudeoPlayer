@@ -4,7 +4,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 
 #include "output/PcmRingBuffer.hpp"
@@ -18,11 +20,15 @@ namespace avplayer
 class AudioOutput
 {
 public:
+    using StartedCallback = std::function<void()>;
+
     AudioOutput() = default;
     ~AudioOutput();
 
     AudioOutput(const AudioOutput&)            = delete;
     AudioOutput& operator=(const AudioOutput&) = delete;
+
+    void setStartedCallback(StartedCallback callback);
 
     void open();
     // 写入环形缓冲区 队列满时阻塞 可被 stop_token 中断
@@ -50,7 +56,9 @@ public:
 private:
     static void SDLCALL streamCallback(void *userdata, SDL_AudioStream *stream,
                                        int additionalAmount, int totalAmount);
+    bool resumeDevice();
     void maybeResume();
+    void notifyStarted();
 
     SDL_AudioStream *m_stream = nullptr;
     SDL_AudioSpec m_spec{};
@@ -68,6 +76,9 @@ private:
     std::atomic<bool> m_deviceResumed{false};
     std::atomic<bool> m_endOfStream{false};
     std::atomic<uint64_t> m_underruns{0};
+
+    mutable std::mutex m_startedMutex;
+    StartedCallback m_startedCallback;
 
 }; // class AudioOutput
 

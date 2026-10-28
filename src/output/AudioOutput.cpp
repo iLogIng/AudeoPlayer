@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 #include <stdexcept>
 
 #include "Log.hpp"
@@ -28,6 +29,52 @@ AudioOutput::~AudioOutput()
     close();
 }
 
+void AudioOutput::setStartedCallback(StartedCallback callback)
+{
+    std::lock_guard lock(m_startedMutex);
+    m_startedCallback = std::move(callback);
+}
+
+// 通知音频开始
+void AudioOutput::notifyStarted()
+{
+    StartedCallback callback;
+    {
+        std::lock_guard lock(m_startedMutex);
+        callback = m_startedCallback;
+    }
+
+    if (!callback) return;
+
+    try {
+        callback();
+    } catch (...) {
+        // 回调异常不能影响音频线程
+    }
+}
+
+// 恢复设备并通知主时钟开始
+bool AudioOutput::resumeDevice()
+{
+    if (!m_stream || m_closing.load()) return false;
+
+    // 恢复SDL音频流设备
+    if (!SDL_ResumeAudioStreamDevice(m_stream)) {
+        logging::ERROR_LOG("AudioOutput::resumeDevice", SDL_GetError());
+        return false;
+    }
+
+    m_deviceResumed.store(true);
+
+    const bool wasPaused = m_clock.paused();
+    m_clock.resume();
+    // 重新开始音频
+    if (wasPaused)
+        notifyStarted();
+
+    return true;
+}
+
 // 打开音频输出设备
 void AudioOutput::open()
 {
@@ -36,6 +83,7 @@ void AudioOutput::open()
     // SDL 音频设备描述符
     SDL_AudioSpec deviceSpec{};
     int sampleFrames = 0;
+    // 音频设备格式
     if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
                                   &deviceSpec, &sampleFrames)) {
         logging::FAILED_LOG("AudioOutput::open", SDL_GetError());
@@ -54,6 +102,7 @@ void AudioOutput::open()
     m_frameBytes = static_cast<size_t>(m_spec.channels) * bytesPerSample;
     // 每秒字节数
     m_bytesPerSecond = static_cast<size_t>(m_spec.freq) * m_frameBytes;
+    // 设备可缓冲时间
     m_deviceBufferDurationMs = sampleFrames > 0
         ? static_cast<uint32_t>(
               static_cast<uint64_t>(sampleFrames) * 1000 / m_spec.freq)
@@ -117,15 +166,7 @@ void AudioOutput::markEndOfStream()
 void AudioOutput::resume()
 {
     if (m_closing.load() || m_paused.load() || m_deviceResumed.load()) return;
-    if (!m_stream) return;
-
-    // 恢复SDL音频流设备
-    if (SDL_ResumeAudioStreamDevice(m_stream)) {
-        m_deviceResumed.store(true);
-        m_clock.resume();
-    } else {
-        logging::ERROR_LOG("AudioOutput::resume", SDL_GetError());
-    }
+    resumeDevice();
 }
 
 // 队列字节长度 包含环形缓冲区和 SDL 内部缓冲
@@ -164,8 +205,7 @@ void AudioOutput::pause(bool paused)
     }
 
     if (m_deviceResumed.load()) {
-        SDL_ResumeAudioStreamDevice(m_stream);
-        m_clock.resume();
+        resumeDevice();
     } else {
         maybeResume();
     }
@@ -214,6 +254,11 @@ void AudioOutput::close()
     m_endOfStream.store(false);
     m_closing.store(false);
 
+    {
+        std::lock_guard lock(m_startedMutex);
+        m_startedCallback = nullptr;
+    }
+
     // 仅在出现欠载时输出诊断信息 读取后清零避免重复输出
     const uint64_t underruns = m_underruns.exchange(0, std::memory_order_relaxed);
     if (underruns > 0) {
@@ -228,16 +273,9 @@ void AudioOutput::close()
 void AudioOutput::maybeResume()
 {
     if (m_closing.load() || m_paused.load() || m_deviceResumed.load()) return;
-    if (!m_stream || !m_ring) return;
-    if (m_ring->availableRead() < m_prebufferBytes) return;
+    if (!m_ring || m_ring->availableRead() < m_prebufferBytes) return;
 
-    // 恢复SDL音频流设备
-    if (SDL_ResumeAudioStreamDevice(m_stream)) {
-        m_deviceResumed.store(true);
-        m_clock.resume();
-    } else {
-        logging::ERROR_LOG("AudioOutput::maybeResume", SDL_GetError());
-    }
+    resumeDevice();
 }
 
 // SDL 音频回调 从环形缓冲区读取数据并推入 SDL 流
@@ -271,6 +309,10 @@ void SDLCALL AudioOutput::streamCallback(void *userdata, SDL_AudioStream *stream
         fedBytes += n;
         remaining -= n;
     }
+
+    // 音频结束后不再重锚时钟 让播放时间线继续按墙钟前进
+    if (self->m_endOfStream.load(std::memory_order_relaxed) && fedBytes == 0)
+        return;
 
     // 更新音频时钟
     int64_t frames = 0;
