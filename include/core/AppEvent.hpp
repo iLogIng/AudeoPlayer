@@ -10,6 +10,7 @@ enum class AppEventCode : int
 {
     Quit,              // 外部退出信号
     PlayerError,       // 播放器内部错误
+    ClockStarted,      // 主时钟开始运行
     VideoFrameReady,   // 视频解码线程已放入新帧
     FrameDue,          // 下一视频帧到达展示时间
     PlaybackFinished,  // 音频/视频均播放完成
