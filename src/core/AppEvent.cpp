@@ -24,7 +24,7 @@ bool AppEvent::init()
 }
 
 // 压入SDL事件队列
-bool AppEvent::push(AppEventCode code)
+bool AppEvent::push(AppEventCode code, uint64_t sessionId, intptr_t payload)
 {
     if (s_type == static_cast<Uint32>(-1)) return false;
 
@@ -32,6 +32,9 @@ bool AppEvent::push(AppEventCode code)
     // 获取事件类型
     event.type = s_type;
     event.user.code = static_cast<int>(code);
+    event.user.data1 = reinterpret_cast<void *>(static_cast<uintptr_t>(sessionId));
+    event.user.data2 = reinterpret_cast<void *>(payload);
+    // 送入SDL事件队列
     return SDL_PushEvent(&event);
 }
 
@@ -43,6 +46,17 @@ bool AppEvent::isAppEvent(const SDL_Event& event)
 AppEventCode AppEvent::code(const SDL_Event& event)
 {
     return static_cast<AppEventCode>(event.user.code);
+}
+
+uint64_t AppEvent::sessionId(const SDL_Event& event)
+{
+    return static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(event.user.data1));
+}
+
+intptr_t AppEvent::payload(const SDL_Event& event)
+{
+    return reinterpret_cast<intptr_t>(event.user.data2);
 }
 
 // 事件类型
