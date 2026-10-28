@@ -17,16 +17,20 @@ constexpr int64_t kMinSyncThresholdUs = 40'000; // 40ms
 constexpr int64_t kMaxSyncThresholdUs = 100'000; // 100ms
 constexpr int kMaxFramesPerCycle = 8;
 
-Uint64 SDLCALL onFrameTimer(void*, SDL_TimerID, Uint64)
+Uint64 SDLCALL onFrameTimer(void *userdata, SDL_TimerID, Uint64)
 {
+    const uint64_t sessionId = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(userdata));
+
     // 队列满时 1ms 后重试
-    return AppEvent::push(AppEventCode::FrameDue) ? 0 : 1'000'000;
+    return AppEvent::push(AppEventCode::FrameDue, sessionId) ? 0 : 1'000'000;
 }
 
 } // namespace
 
-VideoPresenter::VideoPresenter(MediaPlayer& player)
+VideoPresenter::VideoPresenter(MediaPlayer& player, uint64_t sessionId)
     : m_player(player)
+    , m_sessionId(sessionId)
 {
 }
 
@@ -128,7 +132,9 @@ void VideoPresenter::scheduleNext()
     const Uint64 intervalNs = std::max<Uint64>(
         static_cast<Uint64>(delayUs) * 1000, 1);
 
-    m_timer = SDL_AddTimerNS(intervalNs, onFrameTimer, nullptr);
+    m_timer = SDL_AddTimerNS(
+        intervalNs, onFrameTimer,
+        reinterpret_cast<void *>(static_cast<uintptr_t>(m_sessionId)));
     if (!m_timer) {
         logging::ERROR_LOG("VideoPresenter::scheduleNext", SDL_GetError());
     }

@@ -13,7 +13,7 @@ class MediaPlayer;
 class VideoPresenter
 {
 public:
-    explicit VideoPresenter(MediaPlayer& player);
+    explicit VideoPresenter(MediaPlayer& player, uint64_t sessionId = 0);
     ~VideoPresenter();
 
     VideoPresenter(const VideoPresenter&)            = delete;
@@ -29,6 +29,7 @@ private:
     void scheduleNext();
 
     MediaPlayer& m_player;
+    uint64_t m_sessionId = 0;
     SDL_TimerID m_timer = 0;
 
 }; // class VideoPresenter

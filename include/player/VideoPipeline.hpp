@@ -39,6 +39,9 @@ public:
               FrameReadyCallback onFrameReady);
     void close();
 
+    // 丢弃 seek 目标之前的视频帧 只能在 open() 之后调用
+    void setSeekTargetUs(int64_t targetUs);
+
     // 返回 true 表示正常到达 EOF 并收完所有帧
     bool run(PacketQueue& packets, std::stop_token st);
 
@@ -67,6 +70,7 @@ private:
     AVRational m_timeBase{0, 1};
     int64_t m_lastPtsUs = 0;
     int64_t m_frameDurationUs = 33333;
+    int64_t m_seekTargetUs = -1;
     bool m_hasPts = false;
 
     std::atomic<bool> m_decodeDone{false};

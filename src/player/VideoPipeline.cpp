@@ -36,6 +36,7 @@ void VideoPipeline::open(const AVStream *stream,
     m_lastPtsUs = 0;
     m_hasPts = false;
     m_frameDurationUs = 33333;
+    m_seekTargetUs = -1;
 
     AVRational rate = stream->avg_frame_rate;
     if (rate.num <= 0 || rate.den <= 0)
@@ -59,7 +60,13 @@ void VideoPipeline::close()
     m_decoder.close();
     m_stream = nullptr;
     m_timeline = nullptr;
+    m_seekTargetUs = -1;
     m_decodeDone.store(false);
+}
+
+void VideoPipeline::setSeekTargetUs(int64_t targetUs)
+{
+    m_seekTargetUs = targetUs;
 }
 
 bool VideoPipeline::run(PacketQueue& packets, std::stop_token st)
@@ -133,6 +140,15 @@ bool VideoPipeline::drainFrames(std::stop_token st)
 
         m_lastPtsUs = ptsUs;
         m_hasPts = true;
+
+        // seek 后 demuxer 通常停在目标之前的关键帧 跳过目标之前的视频帧
+        if (m_seekTargetUs >= 0) {
+            if (ptsUs + m_frameDurationUs <= m_seekTargetUs) {
+                av_frame_unref(m_frame.get());
+                continue;
+            }
+            m_seekTargetUs = -1;
+        }
 
         ffmpeg::FramePtr converted = m_converter.convert(m_frame.get());
         av_frame_unref(m_frame.get());
