@@ -28,9 +28,11 @@ find_package(Threads REQUIRED)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(avplayer_core STATIC
+    src/app/PlaybackController.cpp
     src/core/AppEvent.cpp
     src/core/PacketQueue.cpp
     src/core/SignalListener.cpp
+    src/core/TerminalInput.cpp
     src/media/Demuxer.cpp
     src/media/AudioDecoder.cpp
     src/media/Resampler.cpp
@@ -47,6 +49,7 @@ add_library(avplayer_core STATIC
     src/player/VideoPipeline.cpp
     src/player/VideoPresenter.cpp
     src/sync/AudioClock.cpp
+    src/sync/SystemClock.cpp
 )
 
 target_include_directories(avplayer_core PUBLIC
