@@ -29,6 +29,7 @@ void MediaPlayer::open()
         throw std::logic_error("media player: can not open after start");
 
     m_demuxer.open(m_path);
+    m_timeline.configure(m_demuxer.formatContext());
 
     if (!m_demuxer.audioStream()) {
         throw std::runtime_error("media player: audio stream is required");
@@ -51,7 +52,10 @@ void MediaPlayer::start(Window *window)
         m_videoDrained.store(!hasVideo());
         m_finished.store(false);
 
-        m_audio.open(m_demuxer.audioStream(), m_demuxer.audioTimeBase());
+        m_audio.open(m_demuxer.audioStream(), m_demuxer.audioTimeBase(), &m_timeline);
+        m_audio.setStartedCallback([this] {
+            notifyEvent(PlayerEvent::ClockStarted);
+        });
 
         if (hasVideo()) {
             if (!window || !window->renderer()) {
@@ -61,6 +65,7 @@ void MediaPlayer::start(Window *window)
             m_video.open(
                 m_demuxer.videoStream(),
                 m_demuxer.videoTimeBase(),
+                &m_timeline,
                 window->renderer(),
                 [] { AppEvent::push(AppEventCode::VideoFrameReady); });
         }
@@ -148,18 +153,39 @@ bool MediaPlayer::nextVideoPtsUs(int64_t& ptsUs) const
 bool MediaPlayer::presentNextVideoFrame()
 {
     const bool presented = m_video.presentNextFrame();
+    updateVideoDrained();
+    return presented;
+}
 
+bool MediaPlayer::dropNextVideoFrame()
+{
+    const bool dropped = m_video.dropNextFrame();
+    updateVideoDrained();
+    return dropped;
+}
+
+int64_t MediaPlayer::videoFrameDurationUs() const
+{
+    return m_video.frameDurationUs();
+}
+
+// 更新视频帧耗尽
+void MediaPlayer::updateVideoDrained()
+{
     if (m_videoEof.load() && !m_video.hasFrame()) {
         m_videoDrained.store(true);
         checkFinished();
     }
-
-    return presented;
 }
 
 bool MediaPlayer::finished() const
 {
     return m_finished.load();
+}
+
+const MasterClock& MediaPlayer::masterClock() const
+{
+    return m_audio.clock();
 }
 
 const AudioClock& MediaPlayer::audioClock() const
@@ -245,10 +271,7 @@ void MediaPlayer::videoLoop(std::stop_token st)
             return;
 
         m_videoEof.store(true);
-        if (!m_video.hasFrame()) {
-            m_videoDrained.store(true);
-            checkFinished();
-        }
+        updateVideoDrained();
     } catch (...) {
         onWorkerExit(std::current_exception());
     }

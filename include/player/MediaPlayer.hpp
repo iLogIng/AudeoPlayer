@@ -10,10 +10,12 @@
 
 #include "core/PacketQueue.hpp"
 #include "media/Demuxer.hpp"
+#include "media/MediaTimeline.hpp"
 #include "player/AudioPipeline.hpp"
 #include "player/PlayerEvent.hpp"
 #include "player/VideoPipeline.hpp"
 #include "sync/AudioClock.hpp"
+#include "sync/MasterClock.hpp"
 
 namespace avplayer
 {
@@ -46,8 +48,11 @@ public:
     bool hasPendingVideoFrame() const;
     bool nextVideoPtsUs(int64_t& ptsUs) const;
     bool presentNextVideoFrame();   // 主线程
+    bool dropNextVideoFrame();      // 主线程
+    int64_t videoFrameDurationUs() const;
 
     bool finished() const;
+    const MasterClock& masterClock() const;
     const AudioClock& audioClock() const;
     std::exception_ptr error() const;
 
@@ -59,9 +64,11 @@ private:
     void setError(std::exception_ptr error);
     void notifyEvent(PlayerEvent event);
     void checkFinished();
+    void updateVideoDrained();
 
     std::filesystem::path m_path;
     Demuxer m_demuxer;
+    MediaTimeline m_timeline;
     PacketQueue m_audioPackets;
     PacketQueue m_videoPackets;
     AudioPipeline m_audio;
