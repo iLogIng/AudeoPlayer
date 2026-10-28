@@ -33,6 +33,8 @@ public:
     void pushEof();
     // 清空队列
     void flush();
+    // 清空并重置 aborted/eof 状态
+    void reset();
     // 终止并唤醒所有阻塞的线程
     void abort();
 

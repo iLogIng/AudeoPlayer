@@ -73,6 +73,17 @@ void PacketQueue::flush()
     m_notFull.notify_all();
 }
 
+void PacketQueue::reset()
+{
+    std::lock_guard lock(m_mutex);
+    m_pktque.clear();
+    m_bytes = 0;
+    m_aborted = false;
+    m_eof = false;
+    m_notEmpty.notify_all();
+    m_notFull.notify_all();
+}
+
 void PacketQueue::abort()
 {
     std::lock_guard lock(m_mutex);
