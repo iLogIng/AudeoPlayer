@@ -13,7 +13,8 @@ namespace avplayer
 struct PcmChunk
 {
     std::vector<uint8_t> data;
-    int64_t ptsUs = 0; // 播放帧时间戳（微秒）
+    int64_t ptsUs = 0;    // 播放帧时间戳（微秒）
+    int sampleFrames = 0; // 本块包含的采样帧数
 }; // struct PcmChunk
 
 // 音频重采样器 将解码帧转换成输出设备需要的格式

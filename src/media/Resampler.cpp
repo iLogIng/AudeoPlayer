@@ -104,7 +104,7 @@ bool Resampler::convert(const AVFrame *frame, PcmChunk& out)
     // 输入数据视图
     const uint8_t **inData = const_cast<const uint8_t **>(frame->extended_data);
 
-    // 执行转换
+    // 执行转换 得到转换的帧数
     const int converted = swr_convert(
         m_swrctx.get(),
         outData, outMaxSamples,
@@ -122,6 +122,7 @@ bool Resampler::convert(const AVFrame *frame, PcmChunk& out)
 
     // PCM数据实际大小
     out.data.resize(static_cast<size_t>(actualSize));
+    out.sampleFrames = converted;
 
     // 时间戳换算到微秒
     const int64_t timestamp = frame->best_effort_timestamp != AV_NOPTS_VALUE
@@ -170,6 +171,7 @@ bool Resampler::flush(PcmChunk& out)
     if (actualSize < 0) return false;
 
     out.data.resize(static_cast<size_t>(actualSize));
+    out.sampleFrames = converted;
     out.ptsUs = 0;
     return true;
 }
