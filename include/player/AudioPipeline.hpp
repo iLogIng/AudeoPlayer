@@ -35,12 +35,15 @@ public:
     void close();
 
     void setStartedCallback(StartedCallback callback);
+    // 丢弃 seek 目标之前的音频数据 只能在 open() 之后调用
+    void setSeekTargetUs(int64_t targetUs);
 
     // 返回 true 表示正常到达 EOF 并完成 flush
     bool run(PacketQueue& packets, std::stop_token st);
 
     void abort();
     void pause(bool paused);
+    void setVolume(float volume);
 
     uint32_t drainDurationMs() const;
     const AudioClock& clock() const;
@@ -59,6 +62,7 @@ private:
     PcmChunk m_chunk;
     const AVStream *m_stream = nullptr;
     const MediaTimeline *m_timeline = nullptr;
+    int64_t m_seekTargetUs = -1;
     std::atomic<bool> m_decodeDone{false};
 
 }; // class AudioPipeline

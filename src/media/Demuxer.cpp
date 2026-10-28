@@ -49,6 +49,7 @@ int Demuxer::readPacket(AVPacket *pkt)
 {
     if (!m_fmtctx)
         return AVERROR_EOF;
+    // 无法保证读出确定的音频流/视频流
     return av_read_frame(m_fmtctx.get(), pkt);
 }
 

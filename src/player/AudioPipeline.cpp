@@ -19,6 +19,7 @@ void AudioPipeline::open(const AVStream *stream, AVRational timeBase,
     m_output.open();
     m_resampler.configure(m_decoder.context(), m_output.spec(), timeBase);
     m_frame = ffmpeg::makeFrame();
+    m_seekTargetUs = -1;
     m_decodeDone.store(false);
 }
 
@@ -29,7 +30,13 @@ void AudioPipeline::close()
     m_frame.reset();
     m_stream = nullptr;
     m_timeline = nullptr;
+    m_seekTargetUs = -1;
     m_decodeDone.store(false);
+}
+
+void AudioPipeline::setSeekTargetUs(int64_t targetUs)
+{
+    m_seekTargetUs = targetUs;
 }
 
 void AudioPipeline::setStartedCallback(StartedCallback callback)
@@ -133,6 +140,44 @@ bool AudioPipeline::pushChunk(std::stop_token st)
     if (m_timeline && m_stream)
         ptsUs = m_timeline->normalize(m_stream, ptsUs);
 
+    // seek 后 demuxer 通常停在目标之前的关键帧 丢弃目标之前的音频
+    if (m_seekTargetUs >= 0 && m_chunk.sampleFrames > 0) {
+        const int rate = m_resampler.outputSampleRate();
+        if (rate > 0) {
+            const int64_t durationUs =
+                static_cast<int64_t>(m_chunk.sampleFrames) * 1'000'000 / rate;
+
+            if (ptsUs + durationUs <= m_seekTargetUs)
+                return true;
+
+            if (ptsUs < m_seekTargetUs) {
+                const int channels = m_resampler.outputChannels();
+                const int bytesPerSample =
+                    av_get_bytes_per_sample(m_resampler.outputFormat());
+                const int64_t frameBytes =
+                    static_cast<int64_t>(bytesPerSample) * channels;
+                // 跳过帧
+                const int64_t skipFrames =
+                    (m_seekTargetUs - ptsUs) * rate / 1'000'000;
+
+                if (skipFrames >= m_chunk.sampleFrames)
+                    return true;
+
+                // 跳过字节
+                const size_t skipBytes =
+                    static_cast<size_t>(skipFrames * frameBytes);
+                m_chunk.data.erase(
+                    m_chunk.data.begin(),
+                    m_chunk.data.begin() + static_cast<std::ptrdiff_t>(skipBytes));
+                // 更新采样帧
+                m_chunk.sampleFrames -= static_cast<int>(skipFrames);
+                ptsUs = m_seekTargetUs;
+            }
+
+            m_seekTargetUs = -1;
+        }
+    }
+
     return m_output.push(m_chunk.data.data(), m_chunk.data.size(), ptsUs, st);
 }
 
@@ -144,6 +189,11 @@ void AudioPipeline::abort()
 void AudioPipeline::pause(bool paused)
 {
     m_output.pause(paused);
+}
+
+void AudioPipeline::setVolume(float volume)
+{
+    m_output.setVolume(volume);
 }
 
 uint32_t AudioPipeline::drainDurationMs() const
